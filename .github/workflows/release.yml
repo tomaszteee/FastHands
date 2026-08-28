@@ -88,7 +88,7 @@ jobs:
           & $csc /nologo /target:exe /optimize+ /out:dist/FastHands-Windows-x64.exe /resource:dist/payload.zip,payload.zip /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll $source
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $version = & dist/FastHands-Windows-x64.exe --version
-          if ($version.Trim() -ne '0.6.4') { throw "Standalone EXE version smoke failed: $version" }
+          if ($version.Trim() -ne '0.6.5') { throw "Standalone EXE version smoke failed: $version" }
       - name: Build Linux/macOS distribution
         if: matrix.kind == 'posix'
         shell: bash

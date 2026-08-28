@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.6.5] - 2026-08-28
+
+- rebuilds native distribution release from the corrected Windows builder without rewriting the failed v0.6.4 tag.
+
 ## [0.6.4] - 2026-08-28
 
 - fixes the Windows GitHub Actions standalone build path and uses an Intel macOS runner for native x64 distribution builds.

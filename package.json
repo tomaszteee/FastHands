@@ -1,6 +1,6 @@
 {
     "name":  "fast-hands-mcp",
-    "version":  "0.6.4",
+    "version":  "0.6.5",
     "type":  "module",
     "description":  "Local-first cross-platform execution and research layer for AI agents with persistent PowerShell, durable checkpoints, live operator control, optional Windows UI, web research and YouTube research.",
     "main":  "server.mjs",
