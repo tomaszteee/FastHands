@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.6.6] - 2026-08-28
+
+- updates GitHub artifact transfer actions to upload-artifact v7.0.1 and download-artifact v8.0.1, pinned by commit SHA, to eliminate the deprecated Node 20 action-runtime warnings.
+
 ## [0.6.5] - 2026-08-28
 
 - rebuilds native distribution release from the corrected Windows builder without rewriting the failed v0.6.4 tag.
