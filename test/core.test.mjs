@@ -100,11 +100,24 @@ test('core execution, degraded probe, interrupt/revise/resume', { timeout: 30000
       label: 'regression-interrupt',
       steps: [
         { kind: 'powershell', command: "'prefix-ok'" },
-        { kind: 'wait', ms: 500 },
+        { kind: 'wait', ms: 700 },
         { kind: 'powershell', command: "'ORIGINAL-TAIL-MUST-NOT-RUN'" },
       ],
     });
-    await sleep(150);
+    const executionDeadline = Date.now() + 10000;
+    let sawMiddleStep = false;
+    while (Date.now() < executionDeadline) {
+      const stateResponse = await fetch(`http://127.0.0.1:${monitorPort}/api/state`);
+      if (stateResponse.ok) {
+        const state = await stateResponse.json();
+        if (state.execution?.status === 'RUNNING' && state.execution?.stepIndex === 1 && state.execution?.safePoint === 'CURRENT_ATOMIC_ACTION') {
+          sawMiddleStep = true;
+          break;
+        }
+      }
+      await sleep(20);
+    }
+    assert.equal(sawMiddleStep, true, 'middle step never became active');
     const msg = await fetch(`http://127.0.0.1:${monitorPort}/api/message`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: 'replace remaining tail', interrupt: true }),
