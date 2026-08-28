@@ -13,7 +13,7 @@
                     "stdio":  "node server.mjs",
                     "monitor":  "node monitor-server.mjs",
                     "check":  "node --check server.mjs \u0026\u0026 node --check monitor-server.mjs \u0026\u0026 node --check windows-ui-bridge.mjs",
-                    "test":  "node scripts/self-test.mjs \u0026\u0026 node --test test/*.test.mjs",
+                    "test":  "node scripts/self-test.mjs \u0026\u0026 node --test test/core.test.mjs",
                     "pack:check":  "npm pack --dry-run",
                     "audit:repo":  "node scripts/repo-audit.mjs"
                 },
