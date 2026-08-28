@@ -184,7 +184,7 @@ Not bundled: LLMs, paid APIs, third-party desktop binaries, personal logs/screen
 
 The repository includes a tag-triggered release workflow prepared to verify the tag/version, rerun the full quality gate, build an npm-compatible source archive, export an SPDX SBOM, generate SHA-256 checksums, and create GitHub build-provenance attestations. No release or npm publication occurs merely by pushing `main`; a version tag is required.
 
-Project policies: [Architecture](docs/ARCHITECTURE.md) Ä‚â€šĂ‚Â· [Tools](docs/TOOLS.md) Ä‚â€šĂ‚Â· [Threat model](THREAT_MODEL.md) Ä‚â€šĂ‚Â· [Security](SECURITY.md) Ä‚â€šĂ‚Â· [Privacy](PRIVACY.md) Ä‚â€šĂ‚Â· [Scope](SCOPE.md) Ä‚â€šĂ‚Â· [Support](SUPPORT.md) Ä‚â€šĂ‚Â· [Contributing](CONTRIBUTING.md).
+Project policies: [Architecture](docs/ARCHITECTURE.md) Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â· [Tools](docs/TOOLS.md) Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â· [Threat model](THREAT_MODEL.md) Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â· [Security](SECURITY.md) Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â· [Privacy](PRIVACY.md) Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â· [Scope](SCOPE.md) Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â· [Support](SUPPORT.md) Ă„â€šĂ˘â‚¬ĹˇÄ‚â€šĂ‚Â· [Contributing](CONTRIBUTING.md).
 
 ## License
 

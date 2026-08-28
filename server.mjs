@@ -33,7 +33,7 @@ const OUTBOX_FILE = path.join(RUNTIME, 'assistant-outbox.jsonl');
 const EVENTS_FILE = path.join(RUNTIME, 'events.jsonl');
 const DELIVERY_FILE = path.join(RUNTIME, 'delivery.json');
 const HEARTBEAT_FILE = path.join(RUNTIME, 'monitor-heartbeat.json');
-const VERSION = '0.6.1';
+const VERSION = '0.6.2';
 const MAX_UIA_BATCH = 8;
 
 for (const dir of [RUNTIME, RUNS, MACROS]) await fs.mkdir(dir, { recursive: true });
