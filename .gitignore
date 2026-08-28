@@ -1,4 +1,4 @@
-﻿node_modules/
+node_modules/
 .venv/
 runtime/
 backups/
@@ -12,3 +12,5 @@ integrations/youtube/output/
 integrations/youtube/test-output*/
 __pycache__/
 *.pyc
+standalone/build-win/
+dist/

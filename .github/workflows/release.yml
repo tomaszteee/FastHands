@@ -46,8 +46,75 @@ jobs:
           npm audit --audit-level=high
           npm run pack:check
 
-  release:
+  build-distributions:
     needs: verify-platforms
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: FastHands-Windows-x64
+            kind: windows
+          - os: ubuntu-latest
+            artifact: FastHands-Linux-x64
+            kind: posix
+          - os: macos-13
+            artifact: FastHands-macOS-x64
+            kind: posix
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install metadata
+        run: npm ci --ignore-scripts
+      - name: Build Windows standalone EXE
+        if: matrix.kind == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/payload/runtime,dist/payload/app | Out-Null
+          $pack = (npm pack --json | ConvertFrom-Json)[0].filename
+          npm install --prefix dist/payload/app (Resolve-Path $pack) --omit=dev --ignore-scripts
+          Copy-Item (node -p "process.execPath") dist/payload/runtime/node.exe
+          Remove-Item $pack -Force
+          Compress-Archive -Path dist/payload/* -DestinationPath dist/payload.zip -CompressionLevel Optimal
+          $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          if (-not (Test-Path $csc)) { throw "C# compiler not found: $csc" }
+          & $csc /nologo /target:exe /optimize+ /out:dist/FastHands-Windows-x64.exe /resource:dist/payload.zip,payload.zip /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll standalone/WindowsLauncher.cs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = & dist/FastHands-Windows-x64.exe --version
+          if ($version.Trim() -ne '0.6.3') { throw "Standalone EXE version smoke failed: $version" }
+      - name: Build Linux/macOS distribution
+        if: matrix.kind == 'posix'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/bundle/runtime dist/bundle/app
+          pack="$(npm pack --silent)"
+          npm install --prefix dist/bundle/app "$PWD/$pack" --omit=dev --ignore-scripts
+          cp "$(node -p 'process.execPath')" dist/bundle/runtime/node
+          chmod +x dist/bundle/runtime/node
+          cc -O2 standalone/posix-launcher.c -o dist/bundle/FastHands
+          chmod +x dist/bundle/FastHands
+          test "$(dist/bundle/FastHands --version)" = "0.6.3"
+          tar -czf "dist/${{ matrix.artifact }}.tar.gz" -C dist/bundle FastHands runtime app
+          rm -f "$pack"
+      - name: Upload distribution
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}.exe
+            dist/${{ matrix.artifact }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [verify-platforms, build-distributions]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -74,10 +141,13 @@ jobs:
           python -m pip install -r requirements-research.txt
           python -m pip check
           python -c "import ddgs, trafilatura, requests, playwright, yt_dlp, faster_whisper; print('research-imports-ok')"
+      - name: Download native distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist/release
+          merge-multiple: true
       - name: Build npm-compatible source archive
-        run: |
-          mkdir -p dist/release
-          npm pack --pack-destination dist/release
+        run: npm pack --pack-destination dist/release
       - name: Export SPDX SBOM
         env:
           GH_TOKEN: ${{ github.token }}
@@ -90,6 +160,8 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: |
+            dist/release/*.exe
+            dist/release/*.tar.gz
             dist/release/*.tgz
             dist/release/*-sbom.spdx.json
             dist/release/SHA256SUMS.txt

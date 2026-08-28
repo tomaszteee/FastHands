@@ -32,6 +32,16 @@ If the operator interrupts a run, completed work is preserved. The caller can re
 - Loopback-only HTTP endpoints by default (`127.0.0.1`).
 - MCP stdio mode for normal MCP clients.
 
+## Downloadable builds
+
+GitHub Releases also provide platform builds that bundle the Node.js runtime:
+
+- `FastHands-Windows-x64.exe` - single-file Windows x64 launcher with embedded Fast Hands payload.
+- `FastHands-Linux-x64.tar.gz` - Linux x64 native launcher + bundled Node runtime.
+- `FastHands-macOS-x64.tar.gz` - macOS Intel x64 native launcher + bundled Node runtime.
+
+PowerShell remains the execution engine (built into supported Windows as a compatibility fallback; PowerShell 7 is required on Linux/macOS). Optional research features still require their documented Python/FFmpeg dependencies.
+
 ## Install from npm
 
 ```bash

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.3] - 2026-08-28
+
+### Native distributions
+
+- adds `FastHands-Windows-x64.exe`, a single-file Windows x64 launcher with embedded Node + Fast Hands payload,
+- adds `FastHands-Linux-x64.tar.gz` with a native Linux launcher and bundled Node runtime,
+- adds `FastHands-macOS-x64.tar.gz` with a native macOS launcher and bundled Node runtime,
+- release workflow builds and smoke-tests every platform artifact before GitHub Release creation.
+
 ## [0.6.1] - 2026-08-28
 
 ### Cross-platform release
