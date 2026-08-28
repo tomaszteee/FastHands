@@ -81,7 +81,7 @@ test('core execution, degraded probe, interrupt/revise/resume', { timeout: 30000
         { kind: 'powershell', command: "'ps-ok'" },
         { kind: 'fs', op: 'write', path: target, content: 'fs-ok' },
         { kind: 'fs', op: 'read', path: target },
-        { kind: 'exec', program: 'cmd.exe', args: ['/c', 'echo exec-ok'] },
+        { kind: 'exec', program: process.execPath, args: ['-e', 'process.stdout.write(\"exec-ok\\n\")'] },
         { kind: 'wait', ms: 20 },
       ],
     });
@@ -91,9 +91,10 @@ test('core execution, degraded probe, interrupt/revise/resume', { timeout: 30000
     const probe = await callJson(client, 'fast_probe', {});
     assert.equal(probe.ok, true);
     assert.equal(probe.coreOk, true);
-    assert.equal(probe.degraded, true);
+    assert.equal(probe.degraded, process.platform === 'win32');
     assert.equal(probe.checks.windowsUiDirect.optional, true);
-    assert.equal(probe.checks.windowsUiDirect.ok, false);
+    if (process.platform === 'win32') assert.equal(probe.checks.windowsUiDirect.ok, false);
+    else assert.equal(probe.checks.windowsUiDirect.disabled, true);
 
     const interruptedPromise = callJson(client, 'fast_run', {
       label: 'regression-interrupt',

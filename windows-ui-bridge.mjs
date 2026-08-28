@@ -18,6 +18,7 @@ class WindowsUiDirectBridge {
   }
 
   async connect() {
+    if (process.platform !== 'win32') throw new Error('Windows UI Direct is available only on Windows');
     if (this.client && this.transport) return this.client;
     if (this.connecting) return this.connecting;
     this.connecting = this._connect();

@@ -2,7 +2,7 @@
     "name":  "fast-hands-mcp",
     "version":  "0.6.1",
     "type":  "module",
-    "description":  "Local-first Windows execution layer for AI agents with persistent PowerShell, durable checkpoints, live operator control, Windows UI, web research and YouTube research integrations.",
+    "description":  "Local-first cross-platform execution and research layer for AI agents with persistent PowerShell, durable checkpoints, live operator control, optional Windows UI, web research and YouTube research.",
     "main":  "server.mjs",
     "license":  "MIT",
     "engines":  {
@@ -46,7 +46,11 @@
                   "SUPPORT.md",
                   "THREAT_MODEL.md",
                   "THIRD_PARTY.md",
-                  "CHANGELOG.md"
+                  "CHANGELOG.md",
+                  "bin/fast-hands.mjs",
+                  "start-server.sh",
+                  "start-monitor.sh",
+                  "scripts/setup-research.sh"
               ],
     "repository":  {
                        "type":  "git",
@@ -68,9 +72,18 @@
                      "checkpoint",
                      "desktop-automation",
                      "web-research",
-                     "youtube-research"
+                     "youtube-research",
+                     "cross-platform",
+                     "linux",
+                     "macos"
                  ],
     "os":  [
-               "win32"
-           ]
+               "win32",
+               "linux",
+               "darwin"
+           ],
+    "bin":  {
+                "fast-hands":  "bin/fast-hands.mjs",
+                "fast-hands-mcp":  "bin/fast-hands.mjs"
+            }
 }

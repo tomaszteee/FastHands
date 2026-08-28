@@ -1,6 +1,6 @@
 # Scope
 
-Fast Hands is a **local-first Windows execution and research layer for MCP-capable AI clients**.
+Fast Hands is a **local-first cross-platform execution and research layer for MCP-capable AI clients**.
 
 ## In scope
 
@@ -8,7 +8,7 @@ Fast Hands is a **local-first Windows execution and research layer for MCP-capab
 - deterministic mixed-step workflows,
 - durable safe-point checkpoints and resume,
 - operator Pause, Emergency Stop, and interrupting errata,
-- optional Windows UI Direct integration over MCP stdio,
+- optional Windows-only UI Direct integration over MCP stdio,
 - optional local web and YouTube research,
 - reusable macros,
 - a loopback-only local operator monitor.

@@ -16,10 +16,12 @@ const RUNTIME = path.join(ROOT, 'runtime');
 const RUNS = path.join(RUNTIME, 'runs');
 const MACROS = path.join(ROOT, 'macros');
 const OPERATOR = process.env.FAST_HANDS_LEGACY_UIA_OPERATOR || '';
+const IS_WINDOWS = process.platform === 'win32';
 const POWERSHELL_7 = 'C:/Program Files/PowerShell/7/pwsh.exe';
 const WINDOWS_POWERSHELL = 'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe';
-const PERSISTENT_POWERSHELL = process.env.FAST_HANDS_PWSH || (fssync.existsSync(POWERSHELL_7) ? POWERSHELL_7 : (fssync.existsSync(WINDOWS_POWERSHELL) ? WINDOWS_POWERSHELL : 'pwsh.exe'));
-const PYTHON = process.env.FAST_HANDS_PYTHON || path.join(ROOT, '.venv', 'Scripts', 'python.exe');
+const PERSISTENT_POWERSHELL = process.env.FAST_HANDS_PWSH || (IS_WINDOWS ? (fssync.existsSync(POWERSHELL_7) ? POWERSHELL_7 : (fssync.existsSync(WINDOWS_POWERSHELL) ? WINDOWS_POWERSHELL : 'pwsh.exe')) : 'pwsh');
+const VENV_PYTHON = IS_WINDOWS ? path.join(ROOT, '.venv', 'Scripts', 'python.exe') : path.join(ROOT, '.venv', 'bin', 'python');
+const PYTHON = process.env.FAST_HANDS_PYTHON || VENV_PYTHON;
 const FASTWEB_SCRIPT = path.join(ROOT, 'integrations', 'fastweb', 'fast_web.py');
 const YOUTUBE_SCRIPT = path.join(ROOT, 'integrations', 'youtube', 'research.py');
 const POWERSHELL_HOST = path.join(path.dirname(fileURLToPath(import.meta.url)), 'powershell-host.ps1');
@@ -107,11 +109,16 @@ function stepMeta(step) {
 
 async function killProcessTree(pid) {
   if (!pid) return;
-  await new Promise(resolve => {
-    const killer = spawn(TASKKILL, ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-    killer.once('error', () => resolve());
-    killer.once('close', () => resolve());
-  });
+  if (IS_WINDOWS) {
+    await new Promise(resolve => {
+      const killer = spawn(TASKKILL, ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      killer.once('error', () => resolve());
+      killer.once('close', () => resolve());
+    });
+    return;
+  }
+  try { process.kill(-Number(pid), 'SIGKILL'); return; } catch {}
+  try { process.kill(Number(pid), 'SIGKILL'); } catch {}
 }
 
 async function runProcess(program, args = [], options = {}) {
@@ -128,7 +135,8 @@ async function runProcess(program, args = [], options = {}) {
   return await new Promise((resolve) => {
     const child = spawn(program, args.map(String), {
       cwd: options.cwd || undefined,
-      windowsHide: true,
+      windowsHide: IS_WINDOWS,
+      detached: !IS_WINDOWS,
       env: { ...process.env, ...(options.env || {}) },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -210,7 +218,8 @@ class PersistentPowerShell {
     if (this.isAlive()) return { pid: this.child.pid, reused: true, generation: this.generation };
     this.generation += 1;
     const child = spawn(PERSISTENT_POWERSHELL, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', POWERSHELL_HOST], {
-      windowsHide: true,
+      windowsHide: IS_WINDOWS,
+      detached: !IS_WINDOWS,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     child.stdout.setEncoding('utf8');
@@ -593,7 +602,7 @@ async function executeRun(run) {
         run.pathsUsed.push('DETACHED_EXEC');
         const child = spawn(String(step.program), Array.isArray(step.args) ? step.args.map(String) : [], {
           cwd: step.cwd || undefined,
-          windowsHide: step.windows_hide !== false,
+          windowsHide: IS_WINDOWS && step.windows_hide !== false,
           env: { ...process.env, ...(step.env || {}) },
           detached: true,
           stdio: 'ignore',
@@ -626,6 +635,7 @@ async function executeRun(run) {
         }
         if (!result.ok) throw new Error(result.error || result.stderr || 'powershell failed');
       } else if (meta.kind === 'windows_ui') {
+        if (!IS_WINDOWS) throw new Error('windows_ui is available only on Windows');
         if (!step.tool) throw new Error('windows_ui requires tool');
         run.pathsUsed.push('WINDOWS_UI_DIRECT');
         result = await windowsUiDirect.call(String(step.tool), step.arguments && typeof step.arguments === 'object' ? step.arguments : {});
@@ -683,6 +693,7 @@ function substitute(value, vars) {
 }
 
 async function captureScreenshot(target = 'all') {
+  if (!IS_WINDOWS) throw new Error('fast_screenshot desktop capture is available only on Windows');
   const id = crypto.randomUUID();
   const out = path.join(RUNTIME, `screen-${id}.png`);
   const rectExpr = target === 'primary' ? '[System.Windows.Forms.Screen]::PrimaryScreen.Bounds' : '[System.Windows.Forms.SystemInformation]::VirtualScreen';
@@ -939,7 +950,9 @@ server.registerTool('fast_probe', { description: 'Measure Fast Hands paths and v
           const ps = await persistentPowerShell.execute('$PSVersionTable.PSVersion.ToString()', { timeoutMs: 10000 });
           checks.powershell = { ok: ps.ok, elapsedMs: now() - psStart, version: ps.stdout.trim(), pid: ps.shellPid, reused: ps.reusedShell };
           const windowsUiStart = now();
-          try {
+          if (!IS_WINDOWS) {
+            checks.windowsUiDirect = { ok: null, disabled: true, platform: process.platform, elapsedMs: now() - windowsUiStart, bridge: windowsUiDirect.status() };
+          } else try {
             const guard = await windowsUiDirect.call('GuardrailStatus', {});
             const tools = await windowsUiDirect.listTools(false);
             checks.windowsUiDirect = { ok: !guard?.isError, elapsedMs: now() - windowsUiStart, toolCount: tools.length, bridge: windowsUiDirect.status() };
@@ -951,14 +964,16 @@ server.registerTool('fast_probe', { description: 'Measure Fast Hands paths and v
           checks.monitor = { online: hbAge !== null && hbAge < 3000, heartbeatAgeMs: hbAge, port: hb?.port ?? 8796 };
           const requireWindowsUi = String(process.env.FAST_HANDS_REQUIRE_WINDOWS_UI || '').trim() === '1';
           const coreOk = !!checks.nodeFs?.exists && !!checks.powershell?.ok;
-          const windowsUiOk = !!checks.windowsUiDirect?.ok;
+          const windowsUiOk = !IS_WINDOWS ? !requireWindowsUi : !!checks.windowsUiDirect?.ok;
           checks.windowsUiDirect.required = requireWindowsUi;
           checks.windowsUiDirect.optional = !requireWindowsUi;
           return { content: [{ type: 'text', text: JSON.stringify({
             ok: coreOk && (!requireWindowsUi || windowsUiOk),
             coreOk,
-            degraded: coreOk && !windowsUiOk,
+            degraded: coreOk && IS_WINDOWS && !windowsUiOk,
             version: VERSION,
+            platform: process.platform,
+            arch: process.arch,
             elapsedMs: now() - started,
             priority: ['DIRECT_EXEC/NODE_FS','WINDOWS_UI_DIRECT','LEGACY_UIA_OPTIONAL','WEB_RESEARCH_OPTIONAL','YOUTUBE_RESEARCH_OPTIONAL','MACRO','VISUAL_FALLBACK'],
             safety: ['SAFE_POINT_BEFORE_AND_AFTER_EACH_STEP','DURABLE_RESUME_CHECKPOINT','OPERATOR_MESSAGE_INTERRUPT','MANUAL_PAUSE','EMERGENCY_STOP','WINDOWS_UI_DIRECT_GUARDRAILS'],

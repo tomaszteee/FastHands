@@ -2,6 +2,14 @@
 
 ## [0.6.1] - 2026-08-28
 
+### Cross-platform release
+
+- supports Windows, Linux and macOS for core PowerShell/checkpoint/research workflows,
+- adds POSIX process-group Emergency Stop behavior and `.sh` launch/setup scripts,
+- keeps Windows UI Direct and desktop screenshot capture explicitly Windows-only,
+- adds `fast-hands` and `fast-hands-mcp` npm CLI entry points,
+- adds multi-platform CI and exact tag/version release validation.
+
 ### Fixed
 
 - repaired `fast_screenshot` by routing the visual fallback through the configured PowerShell executable,

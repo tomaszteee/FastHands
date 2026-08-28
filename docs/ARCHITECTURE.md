@@ -1,6 +1,6 @@
 # Architecture and execution model
 
-Fast Hands runs as an MCP server over stdio or loopback HTTP. The operator monitor can supervise the HTTP server.
+Fast Hands runs as an MCP server over stdio or loopback HTTP on Windows, Linux and macOS. The operator monitor can supervise the HTTP server. Core command execution uses PowerShell 7 (`pwsh`) across platforms; Windows PowerShell is a Windows compatibility fallback.
 
 ## Execution paths
 
@@ -9,7 +9,7 @@ Fast Hands runs as an MCP server over stdio or loopback HTTP. The operator monit
 - `detached_exec` - explicitly detached process launch.
 - `fs` - Node filesystem operations.
 - `wait` - interruptible wait step.
-- `windows_ui` - call a configured Windows UI Direct MCP tool from inside `fast_run` or a macro.
+- `windows_ui` - Windows-only: call a configured Windows UI Direct MCP tool from inside `fast_run` or a macro.
 - legacy `uia` - optional compatibility path only when `FAST_HANDS_LEGACY_UIA_OPERATOR` is explicitly configured.
 
 Every normal step has a safe point before and after execution. Operator messages and Pause requests return control at safe points. Emergency Stop terminates active process work and marks uncertain state when partial execution is possible.
