@@ -1,0 +1,16 @@
+import fs from 'node:fs/promises';
+import fssync from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const checks = {};
+checks.source = ['server.mjs','monitor-server.mjs','windows-ui-bridge.mjs','powershell-host.ps1','monitor.html'].every(f => fssync.existsSync(path.join(root,f)));
+checks.noBackupsCommitted = !fssync.existsSync(path.join(root,'backups'));
+checks.fastWeb = fssync.existsSync(path.join(root,'integrations','fastweb','fast_web.py'));
+checks.youtube = fssync.existsSync(path.join(root,'integrations','youtube','research.py')) && fssync.existsSync(path.join(root,'integrations','youtube','transcript_helper.py'));
+const files = ['server.mjs','monitor-server.mjs','windows-ui-bridge.mjs','monitor.html','README.md','.env.example'];
+const text = (await Promise.all(files.map(f => fs.readFile(path.join(root,f),'utf8')))).join('\n');
+checks.portable = !/const ROOT\s*=\s*["'][A-Za-z]:[\\/]|gho_[A-Za-z0-9_]+|PRIVATE KEY/i.test(text);
+const ok = Object.values(checks).every(Boolean);
+console.log(JSON.stringify({ok, checks}, null, 2));
+process.exit(ok ? 0 : 1);

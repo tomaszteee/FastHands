@@ -1,0 +1,14 @@
+﻿node_modules/
+.venv/
+runtime/
+backups/
+*.log
+*.tmp
+*.bak*
+.env
+.DS_Store
+Thumbs.db
+integrations/youtube/output/
+integrations/youtube/test-output*/
+__pycache__/
+*.pyc

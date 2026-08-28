@@ -1,0 +1,17 @@
+{
+  "name": "inspect_window",
+  "failFast": true,
+  "steps": [
+    {
+      "kind": "uia",
+      "action": "tree",
+      "window": "{{window}}",
+      "limit": 12
+    },
+    {
+      "kind": "uia",
+      "action": "focus",
+      "window": "{{window}}"
+    }
+  ]
+}

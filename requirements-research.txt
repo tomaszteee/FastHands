@@ -1,0 +1,6 @@
+﻿ddgs==9.16.0
+trafilatura==2.2.0
+requests==2.34.2
+playwright==1.62.0
+yt-dlp==2026.8.19
+faster-whisper==1.2.1
