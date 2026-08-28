@@ -1,22 +1,59 @@
-﻿name: Bug report
-description: Report a reproducible Fast Hands problem
+name: Bug report
+description: Report a reproducible Fast Hands defect or regression.
 title: "[Bug]: "
-labels: [bug]
+labels: ["bug"]
 body:
-  - type: textarea
-    id: summary
+  - type: markdown
     attributes:
-      label: What happened?
+      value: |
+        Thanks for helping improve Fast Hands. Security vulnerabilities must be reported privately through the Security tab, not here. Remove private paths, tokens, logs and screenshots before posting.
+  - type: input
+    id: version
+    attributes:
+      label: Fast Hands version or commit
+      placeholder: v0.6.1 or commit SHA
     validations:
       required: true
-  - type: textarea
-    id: reproduce
-    attributes:
-      label: Reproduction steps
-    validations:
-      required: true
-  - type: textarea
+  - type: input
     id: environment
     attributes:
       label: Environment
-      description: Windows version, Node version, Fast Hands version, optional backends. Remove usernames, tokens and private paths.
+      description: Windows version, Node.js version, PowerShell version, and any optional backend involved.
+      placeholder: Windows 11 / Node.js 24 / PowerShell 7 / Windows UI Direct enabled
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal sanitized reproduction
+      description: Include the smallest steps or MCP call that reproduces the issue. Do not include private paths, credentials, runtime logs, or screenshots unless sanitized.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Operator-control / safety impact
+      description: Did this affect checkpoints, Pause, Emergency Stop, resume/revise, UI control, network binding, or runtime privacy?
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues first.
+          required: true
+        - label: This is not a security vulnerability that should be reported privately.
+          required: true
+        - label: I removed private paths, credentials, tokens, logs and screenshots from this report.
+          required: true

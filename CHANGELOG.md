@@ -1,4 +1,21 @@
-﻿# Changelog
+# Changelog
+
+## [0.6.1] - 2026-08-28
+
+### Fixed
+
+- repaired `fast_screenshot` by routing the visual fallback through the configured PowerShell executable,
+- replaced the bundled legacy-UIA macro with a shipped `windows_ui` / Windows UI Direct workflow,
+- made optional Windows UI availability non-fatal to core `fast_probe` health unless explicitly required.
+
+### Added
+
+- native checkpointed `windows_ui` steps for `fast_run` and macros,
+- regression tests for core execution and interrupt/revise/resume semantics,
+- repository privacy audit and package allowlist,
+- threat model, scope, privacy, support, architecture/tools documentation, CODEOWNERS and contribution templates,
+- pinned/minimal-permission CI across Node.js 20/22/24 on Windows,
+- tag-triggered GitHub release pipeline with source archive, SPDX SBOM, SHA-256 checksums and provenance attestations.
 
 ## 0.6.0 - 2026-08-28
 

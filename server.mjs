@@ -31,7 +31,7 @@ const OUTBOX_FILE = path.join(RUNTIME, 'assistant-outbox.jsonl');
 const EVENTS_FILE = path.join(RUNTIME, 'events.jsonl');
 const DELIVERY_FILE = path.join(RUNTIME, 'delivery.json');
 const HEARTBEAT_FILE = path.join(RUNTIME, 'monitor-heartbeat.json');
-const VERSION = '0.6.0';
+const VERSION = '0.6.1';
 const MAX_UIA_BATCH = 8;
 
 for (const dir of [RUNTIME, RUNS, MACROS]) await fs.mkdir(dir, { recursive: true });
@@ -91,8 +91,17 @@ async function markMessagesDelivered(messages) {
 
 function stepMeta(step) {
   const kind = String(step?.kind || '').toLowerCase();
-  const action = kind === 'uia' ? String(step.action || '') : kind === 'fs' ? String(step.op || '') : kind === 'powershell' ? 'PowerShell' : (kind === 'exec' || kind === 'detached_exec') ? path.basename(String(step.program || '')) : kind === 'wait' ? 'wait' : '';
-  const target = kind === 'uia' ? String(step.element || step.window || '') : kind === 'fs' ? String(step.path || '') : kind === 'exec' ? String(step.program || '') : kind === 'powershell' ? String(step.cwd || '') : '';
+  const action = kind === 'uia' ? String(step.action || '')
+    : kind === 'windows_ui' ? String(step.tool || '')
+    : kind === 'fs' ? String(step.op || '')
+    : kind === 'powershell' ? 'PowerShell'
+    : (kind === 'exec' || kind === 'detached_exec') ? path.basename(String(step.program || ''))
+    : kind === 'wait' ? 'wait' : '';
+  const target = kind === 'uia' ? String(step.element || step.window || '')
+    : kind === 'windows_ui' ? String(step.tool || '')
+    : kind === 'fs' ? String(step.path || '')
+    : kind === 'exec' ? String(step.program || '')
+    : kind === 'powershell' ? String(step.cwd || '') : '';
   return { kind, action, target };
 }
 
@@ -616,6 +625,14 @@ async function executeRun(run) {
           return publicResult(run, { interrupted: true, interruptReason: 'EMERGENCY_STOP', operatorMessages: await pendingOperatorMessages() });
         }
         if (!result.ok) throw new Error(result.error || result.stderr || 'powershell failed');
+      } else if (meta.kind === 'windows_ui') {
+        if (!step.tool) throw new Error('windows_ui requires tool');
+        run.pathsUsed.push('WINDOWS_UI_DIRECT');
+        result = await windowsUiDirect.call(String(step.tool), step.arguments && typeof step.arguments === 'object' ? step.arguments : {});
+        if (result?.isError) {
+          const detail = (result.content || []).filter(x => x?.type === 'text').map(x => x.text || '').join('\n').trim();
+          throw new Error(detail || `Windows UI tool failed: ${step.tool}`);
+        }
       } else if (meta.kind === 'fs') {
         run.pathsUsed.push('NODE_FS');
         result = await fsStep(step);
@@ -670,7 +687,7 @@ async function captureScreenshot(target = 'all') {
   const out = path.join(RUNTIME, `screen-${id}.png`);
   const rectExpr = target === 'primary' ? '[System.Windows.Forms.Screen]::PrimaryScreen.Bounds' : '[System.Windows.Forms.SystemInformation]::VirtualScreen';
   const script = `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $r=${rectExpr}; $b=New-Object System.Drawing.Bitmap $r.Width,$r.Height; $g=[System.Drawing.Graphics]::FromImage($b); $g.CopyFromScreen($r.Left,$r.Top,0,0,$b.Size); $b.Save('${out.replaceAll("'", "''")}',[System.Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $b.Dispose()`;
-  const proc = await runProcess(POWERSHELL, ['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',script], { timeoutMs: 15000 });
+  const proc = await runProcess(PERSISTENT_POWERSHELL, ['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',script], { timeoutMs: 15000 });
   if (!proc.ok) throw new Error(proc.error || proc.stderr);
   const data = await fs.readFile(out);
   return { path: out, data: data.toString('base64') };
@@ -932,7 +949,21 @@ server.registerTool('fast_probe', { description: 'Measure Fast Hands paths and v
           const hb = await readJson(HEARTBEAT_FILE, null);
           const hbAge = hb?.at ? now() - new Date(hb.at).getTime() : null;
           checks.monitor = { online: hbAge !== null && hbAge < 3000, heartbeatAgeMs: hbAge, port: hb?.port ?? 8796 };
-          return { content: [{ type: 'text', text: JSON.stringify({ ok: checks.windowsUiDirect.ok && checks.powershell.ok, version: VERSION, elapsedMs: now() - started, priority: ['DIRECT_EXEC/NODE_FS','WINDOWS_UI_DIRECT','LEGACY_UIA_OPTIONAL','WEB_RESEARCH_OPTIONAL','YOUTUBE_RESEARCH_OPTIONAL','MACRO','VISUAL_FALLBACK'], safety: ['SAFE_POINT_BEFORE_AND_AFTER_EACH_STEP','DURABLE_RESUME_CHECKPOINT','OPERATOR_MESSAGE_INTERRUPT','MANUAL_PAUSE','EMERGENCY_STOP','WINDOWS_UI_DIRECT_GUARDRAILS'], checks }, null, 2) }] };
+          const requireWindowsUi = String(process.env.FAST_HANDS_REQUIRE_WINDOWS_UI || '').trim() === '1';
+          const coreOk = !!checks.nodeFs?.exists && !!checks.powershell?.ok;
+          const windowsUiOk = !!checks.windowsUiDirect?.ok;
+          checks.windowsUiDirect.required = requireWindowsUi;
+          checks.windowsUiDirect.optional = !requireWindowsUi;
+          return { content: [{ type: 'text', text: JSON.stringify({
+            ok: coreOk && (!requireWindowsUi || windowsUiOk),
+            coreOk,
+            degraded: coreOk && !windowsUiOk,
+            version: VERSION,
+            elapsedMs: now() - started,
+            priority: ['DIRECT_EXEC/NODE_FS','WINDOWS_UI_DIRECT','LEGACY_UIA_OPTIONAL','WEB_RESEARCH_OPTIONAL','YOUTUBE_RESEARCH_OPTIONAL','MACRO','VISUAL_FALLBACK'],
+            safety: ['SAFE_POINT_BEFORE_AND_AFTER_EACH_STEP','DURABLE_RESUME_CHECKPOINT','OPERATOR_MESSAGE_INTERRUPT','MANUAL_PAUSE','EMERGENCY_STOP','WINDOWS_UI_DIRECT_GUARDRAILS'],
+            checks,
+          }, null, 2) }] };
         });
 
 return server;

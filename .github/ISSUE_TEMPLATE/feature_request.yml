@@ -1,0 +1,37 @@
+name: Feature request
+description: Propose a focused improvement that fits Fast Hands scope.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Fast Hands is intentionally a local Windows execution/research layer. Please read SCOPE.md and THREAT_MODEL.md before proposing broader features.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What concrete problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful public contract.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety / operator-control implications
+      description: Note any effect on execution, checkpoints, Pause/Stop, UI control, networking, runtime data, or optional backends.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I read SCOPE.md and THREAT_MODEL.md and this request fits the project boundary.
+          required: true
+        - label: I searched existing issues first.
+          required: true

@@ -1,4 +1,8 @@
-﻿# Fast Hands
+# Fast Hands
+
+[![CI](https://github.com/tomaszteee/FastHands/actions/workflows/ci.yml/badge.svg)](https://github.com/tomaszteee/FastHands/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+![Node.js >=20](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white)
 
 **Local-first execution and research layer for AI agents on Windows.**
 
@@ -18,7 +22,7 @@ If the operator interrupts a run, completed work is preserved. The caller can re
 
 - `fast_exec` - low-latency command execution through a persistent hidden PowerShell process.
 - `fast_batch` - 1-200 PowerShell commands with separate results and checkpoints.
-- `fast_run` - mixed multi-step workflows with durable progress and operator control.
+- `fast_run` - mixed multi-step workflows with durable progress and operator control, including native `windows_ui` steps when Windows UI Direct is configured.
 - `fast_resume` / `fast_revise` - resume from a checkpoint or replace only the unexecuted tail.
 - Local operator monitor with **RUN / PAUSE / EMERGENCY STOP** and interrupting messages.
 - Windows UI Direct adapter via a compatible `windows-mcp-server` executable.
@@ -100,6 +104,12 @@ node server.mjs
 
 Fast Hands opens the backend over MCP stdio and exposes convenience tools such as `fast_ui_snapshot`, `fast_ui_click`, `fast_ui_type`, and `fast_ui_invoke`. `fast_ui_call` provides access to the complete backend tool surface.
 
+Inside `fast_run` or a saved macro, Windows UI Direct can be used as a normal checkpointed step:
+
+```json
+{ "kind": "windows_ui", "tool": "Snapshot", "arguments": { "all_windows": true } }
+```
+
 If the backend is unavailable, shell/checkpoint functionality remains usable; UI-specific calls fail clearly.
 
 ## Web and YouTube research
@@ -127,6 +137,7 @@ FastWeb uses public search/read backends and local extraction. YouTubeResearch u
 | `FAST_HANDS_PWSH` | explicit PowerShell executable |
 | `FAST_HANDS_PYTHON` | explicit Python executable for research integrations |
 | `FAST_HANDS_WINDOWS_MCP` | Windows UI Direct MCP executable/command |
+| `FAST_HANDS_REQUIRE_WINDOWS_UI` | set to `1` to make Windows UI availability part of global `fast_probe` PASS/FAIL |
 | `FAST_HANDS_LEGACY_UIA_OPERATOR` | optional legacy UIA batch executable |
 
 ## Safety model
@@ -142,6 +153,12 @@ Do not expose the monitor or HTTP MCP endpoint to an untrusted network without a
 Included here: the Fast Hands server, operator monitor, research integrations and adapter code written for Fast Hands.
 
 Not bundled: LLMs, paid APIs, third-party desktop binaries, personal logs/screenshots, local runtime state, credentials, machine-specific paths, or project handoff files.
+
+## Release integrity
+
+The repository includes a tag-triggered release workflow prepared to verify the tag/version, rerun the full quality gate, build an npm-compatible source archive, export an SPDX SBOM, generate SHA-256 checksums, and create GitHub build-provenance attestations. No release or npm publication occurs merely by pushing `main`; a version tag is required.
+
+Project policies: [Architecture](docs/ARCHITECTURE.md) · [Tools](docs/TOOLS.md) · [Threat model](THREAT_MODEL.md) · [Security](SECURITY.md) · [Privacy](PRIVACY.md) · [Scope](SCOPE.md) · [Support](SUPPORT.md) · [Contributing](CONTRIBUTING.md).
 
 ## License
 

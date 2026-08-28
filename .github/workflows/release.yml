@@ -1,0 +1,75 @@
+name: Release source package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.11'
+      - name: Install metadata only
+        run: npm ci --ignore-scripts
+      - name: Verify tag/version
+        run: node scripts/verify-release-tag.mjs
+      - name: Full quality gate
+        run: |
+          npm run check
+          npm test
+          npm run audit:repo
+          npm audit --audit-level=high
+          python -m pip install -r requirements-research.txt
+          python -m pip check
+          python -c "import ddgs, trafilatura, requests, playwright, yt_dlp, faster_whisper; print('research-imports-ok')"
+          python -m py_compile integrations/fastweb/fast_web.py integrations/youtube/research.py integrations/youtube/transcript_helper.py
+      - name: Build npm-compatible source archive
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/release | Out-Null
+          npm pack --pack-destination dist/release
+      - name: Export SPDX SBOM
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/${env:GITHUB_REPOSITORY}/dependency-graph/sbom" --jq '.sbom' | Set-Content "dist/release/fast-hands-${env:GITHUB_REF_NAME}-sbom.spdx.json" -Encoding utf8
+      - name: Generate SHA-256 checksums
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem dist/release -File | Sort-Object Name
+          $lines = foreach ($f in $files) { "{0}  {1}" -f (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $f.Name }
+          $lines | Set-Content dist/release/SHA256SUMS.txt -Encoding ascii
+      - name: Attest release provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            dist/release/*.tgz
+            dist/release/*-sbom.spdx.json
+            dist/release/SHA256SUMS.txt
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$env:GITHUB_REF_NAME" dist/release/* --repo "$env:GITHUB_REPOSITORY" --verify-tag --title "Fast Hands $env:GITHUB_REF_NAME" --generate-notes --latest

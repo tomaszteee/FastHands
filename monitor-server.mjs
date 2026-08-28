@@ -269,7 +269,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/health') {
-      json(res, 200, { ok: true, name: 'fast-hands-monitor', version: '0.6.0', pid: process.pid, port: PORT, mcpPort: MCP_PORT, mcpOnline: await mcpHealth() });
+      json(res, 200, { ok: true, name: 'fast-hands-monitor', version: '0.6.1', pid: process.pid, port: PORT, mcpPort: MCP_PORT, mcpOnline: await mcpHealth() });
       return;
     }
 

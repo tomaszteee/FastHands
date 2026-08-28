@@ -8,9 +8,16 @@ checks.source = ['server.mjs','monitor-server.mjs','windows-ui-bridge.mjs','powe
 checks.noBackupsCommitted = !fssync.existsSync(path.join(root,'backups'));
 checks.fastWeb = fssync.existsSync(path.join(root,'integrations','fastweb','fast_web.py'));
 checks.youtube = fssync.existsSync(path.join(root,'integrations','youtube','research.py')) && fssync.existsSync(path.join(root,'integrations','youtube','transcript_helper.py'));
+checks.docs = ['SECURITY.md','PRIVACY.md','SCOPE.md','SUPPORT.md','THREAT_MODEL.md','docs/ARCHITECTURE.md','docs/TOOLS.md'].every(f => fssync.existsSync(path.join(root,f)));
 const files = ['server.mjs','monitor-server.mjs','windows-ui-bridge.mjs','monitor.html','README.md','.env.example'];
 const text = (await Promise.all(files.map(f => fs.readFile(path.join(root,f),'utf8')))).join('\n');
 checks.portable = !/const ROOT\s*=\s*["'][A-Za-z]:[\\/]|gho_[A-Za-z0-9_]+|PRIVATE KEY/i.test(text);
+const server = await fs.readFile(path.join(root,'server.mjs'),'utf8');
+checks.screenshotRunner = /captureScreenshot[\s\S]*runProcess\(PERSISTENT_POWERSHELL/.test(server) && !/runProcess\(POWERSHELL,/.test(server);
+checks.windowsUiStep = /meta\.kind === 'windows_ui'/.test(server);
+checks.probeOptionalUi = ['coreOk','degraded','FAST_HANDS_REQUIRE_WINDOWS_UI'].every(x => server.includes(x));
+const macro = JSON.parse(await fs.readFile(path.join(root,'macros','inspect_window.json'),'utf8'));
+checks.publicMacro = macro.steps?.length > 0 && macro.steps.every(s => s.kind === 'windows_ui');
 const ok = Object.values(checks).every(Boolean);
 console.log(JSON.stringify({ok, checks}, null, 2));
 process.exit(ok ? 0 : 1);
