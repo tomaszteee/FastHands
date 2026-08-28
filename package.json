@@ -1,89 +1,89 @@
 {
-    "name":  "fast-hands-mcp",
-    "version":  "0.6.3",
-    "type":  "module",
-    "description":  "Local-first cross-platform execution and research layer for AI agents with persistent PowerShell, durable checkpoints, live operator control, optional Windows UI, web research and YouTube research.",
-    "main":  "server.mjs",
-    "license":  "MIT",
-    "engines":  {
-                    "node":  "\u003e=20"
-                },
-    "scripts":  {
-                    "start":  "node server.mjs --http",
-                    "stdio":  "node server.mjs",
-                    "monitor":  "node monitor-server.mjs",
-                    "check":  "node --check server.mjs \u0026\u0026 node --check monitor-server.mjs \u0026\u0026 node --check windows-ui-bridge.mjs",
-                    "test":  "node scripts/self-test.mjs \u0026\u0026 node --test test/core.test.mjs",
-                    "pack:check":  "npm pack --dry-run",
-                    "audit:repo":  "node scripts/repo-audit.mjs"
-                },
-    "dependencies":  {
-                         "@modelcontextprotocol/client":  "2.0.0",
-                         "@modelcontextprotocol/node":  "2.0.0",
-                         "@modelcontextprotocol/server":  "2.0.0",
-                         "zod":  "^4.1.5"
-                     },
-    "files":  [
-                  "server.mjs",
-                  "monitor-server.mjs",
-                  "powershell-host.ps1",
-                  "windows-ui-bridge.mjs",
-                  "monitor.html",
-                  "start-server.cmd",
-                  "start-monitor.cmd",
-                  "macros/inspect_window.json",
-                  "integrations/fastweb/fast_web.py",
-                  "integrations/youtube/research.py",
-                  "integrations/youtube/transcript_helper.py",
-                  "scripts/setup-research.ps1",
-                  "docs/ARCHITECTURE.md",
-                  "docs/TOOLS.md",
-                  "requirements-research.txt",
-                  "README.md",
-                  "SECURITY.md",
-                  "PRIVACY.md",
-                  "SCOPE.md",
-                  "SUPPORT.md",
-                  "THREAT_MODEL.md",
-                  "THIRD_PARTY.md",
-                  "CHANGELOG.md",
-                  "bin/fast-hands.mjs",
-                  "start-server.sh",
-                  "start-monitor.sh",
-                  "scripts/setup-research.sh"
-              ],
-    "repository":  {
-                       "type":  "git",
-                       "url":  "git+https://github.com/tomaszteee/FastHands.git"
-                   },
-    "bugs":  {
-                 "url":  "https://github.com/tomaszteee/FastHands/issues"
-             },
-    "homepage":  "https://github.com/tomaszteee/FastHands#readme",
-    "keywords":  [
-                     "ai-agent",
-                     "automation",
-                     "windows",
-                     "mcp",
-                     "mcp-server",
-                     "computer-use",
-                     "powershell",
-                     "human-in-the-loop",
-                     "checkpoint",
-                     "desktop-automation",
-                     "web-research",
-                     "youtube-research",
-                     "cross-platform",
-                     "linux",
-                     "macos"
-                 ],
-    "os":  [
-               "win32",
-               "linux",
-               "darwin"
-           ],
-    "bin":  {
-                "fast-hands-mcp":  "bin/fast-hands.mjs",
-                "fast-hands":  "bin/fast-hands.mjs"
-            }
+    "name": "fast-hands-mcp",
+    "version": "0.6.4",
+    "type": "module",
+    "description": "Local-first cross-platform execution and research layer for AI agents with persistent PowerShell, durable checkpoints, live operator control, optional Windows UI, web research and YouTube research.",
+    "main": "server.mjs",
+    "license": "MIT",
+    "engines": {
+        "node": ">=20"
+    },
+    "scripts": {
+        "start": "node server.mjs --http",
+        "stdio": "node server.mjs",
+        "monitor": "node monitor-server.mjs",
+        "check": "node --check server.mjs && node --check monitor-server.mjs && node --check windows-ui-bridge.mjs",
+        "test": "node scripts/self-test.mjs && node --test test/core.test.mjs",
+        "pack:check": "npm pack --dry-run",
+        "audit:repo": "node scripts/repo-audit.mjs"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/client": "2.0.0",
+        "@modelcontextprotocol/node": "2.0.0",
+        "@modelcontextprotocol/server": "2.0.0",
+        "zod": "^4.1.5"
+    },
+    "files": [
+        "server.mjs",
+        "monitor-server.mjs",
+        "powershell-host.ps1",
+        "windows-ui-bridge.mjs",
+        "monitor.html",
+        "start-server.cmd",
+        "start-monitor.cmd",
+        "macros/inspect_window.json",
+        "integrations/fastweb/fast_web.py",
+        "integrations/youtube/research.py",
+        "integrations/youtube/transcript_helper.py",
+        "scripts/setup-research.ps1",
+        "docs/ARCHITECTURE.md",
+        "docs/TOOLS.md",
+        "requirements-research.txt",
+        "README.md",
+        "SECURITY.md",
+        "PRIVACY.md",
+        "SCOPE.md",
+        "SUPPORT.md",
+        "THREAT_MODEL.md",
+        "THIRD_PARTY.md",
+        "CHANGELOG.md",
+        "bin/fast-hands.mjs",
+        "start-server.sh",
+        "start-monitor.sh",
+        "scripts/setup-research.sh"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/tomaszteee/FastHands.git"
+    },
+    "bugs": {
+        "url": "https://github.com/tomaszteee/FastHands/issues"
+    },
+    "homepage": "https://github.com/tomaszteee/FastHands#readme",
+    "keywords": [
+        "ai-agent",
+        "automation",
+        "windows",
+        "mcp",
+        "mcp-server",
+        "computer-use",
+        "powershell",
+        "human-in-the-loop",
+        "checkpoint",
+        "desktop-automation",
+        "web-research",
+        "youtube-research",
+        "cross-platform",
+        "linux",
+        "macos"
+    ],
+    "os": [
+        "win32",
+        "linux",
+        "darwin"
+    ],
+    "bin": {
+        "fast-hands-mcp": "bin/fast-hands.mjs",
+        "fast-hands": "bin/fast-hands.mjs"
+    }
 }

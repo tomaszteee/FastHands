@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.6.4] - 2026-08-28
+
+- fixes the Windows GitHub Actions standalone build path and uses an Intel macOS runner for native x64 distribution builds.
+
 ## [0.6.3] - 2026-08-28
 
 ### Native distributions

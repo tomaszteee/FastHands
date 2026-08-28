@@ -7,7 +7,7 @@ using System.Text;
 
 internal static class Program
 {
-    private const string Version = "0.6.3";
+    private const string Version = "0.6.4";
 
     private static string Quote(string value)
     {

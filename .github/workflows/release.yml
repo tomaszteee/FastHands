@@ -58,7 +58,7 @@ jobs:
           - os: ubuntu-latest
             artifact: FastHands-Linux-x64
             kind: posix
-          - os: macos-13
+          - os: macos-15-intel
             artifact: FastHands-macOS-x64
             kind: posix
     runs-on: ${{ matrix.os }}
@@ -84,10 +84,11 @@ jobs:
           Compress-Archive -Path dist/payload/* -DestinationPath dist/payload.zip -CompressionLevel Optimal
           $csc = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
           if (-not (Test-Path $csc)) { throw "C# compiler not found: $csc" }
-          & $csc /nologo /target:exe /optimize+ /out:dist/FastHands-Windows-x64.exe /resource:dist/payload.zip,payload.zip /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll standalone/WindowsLauncher.cs
+          $source = (Resolve-Path 'standalone\WindowsLauncher.cs').Path
+          & $csc /nologo /target:exe /optimize+ /out:dist/FastHands-Windows-x64.exe /resource:dist/payload.zip,payload.zip /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll $source
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $version = & dist/FastHands-Windows-x64.exe --version
-          if ($version.Trim() -ne '0.6.3') { throw "Standalone EXE version smoke failed: $version" }
+          if ($version.Trim() -ne '0.6.4') { throw "Standalone EXE version smoke failed: $version" }
       - name: Build Linux/macOS distribution
         if: matrix.kind == 'posix'
         shell: bash
@@ -100,7 +101,7 @@ jobs:
           chmod +x dist/bundle/runtime/node
           cc -O2 standalone/posix-launcher.c -o dist/bundle/FastHands
           chmod +x dist/bundle/FastHands
-          test "$(dist/bundle/FastHands --version)" = "0.6.3"
+          test "$(dist/bundle/FastHands --version)" = "0.6.4"
           tar -czf "dist/${{ matrix.artifact }}.tar.gz" -C dist/bundle FastHands runtime app
           rm -f "$pack"
       - name: Upload distribution
