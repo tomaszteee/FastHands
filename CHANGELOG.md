@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.7] - 2026-08-28
+
+- hardens atomic runtime-state writes with bounded retries for transient Windows file-lock errors (`EPERM`/`EBUSY`/`EACCES`).
+### Resume integrity
+
+- fingerprints tracked file artifacts at durable checkpoints with SHA-256 + size,
+- blocks `fast_resume` with `WORKSPACE_DRIFT_DETECTED` when a tracked artifact changed after the checkpoint,
+- automatically tracks file paths referenced by `fs` steps and supports explicit per-step `artifacts` paths for shell/executable workflows,
+- adds regression coverage for same-size content changes so hash verification, not file size alone, guards resume.
+
 ## [0.6.6] - 2026-08-28
 
 - updates GitHub artifact transfer actions to upload-artifact v7.0.1 and download-artifact v8.0.1, pinned by commit SHA, to eliminate the deprecated Node 20 action-runtime warnings.

@@ -33,7 +33,7 @@ const OUTBOX_FILE = path.join(RUNTIME, 'assistant-outbox.jsonl');
 const EVENTS_FILE = path.join(RUNTIME, 'events.jsonl');
 const DELIVERY_FILE = path.join(RUNTIME, 'delivery.json');
 const HEARTBEAT_FILE = path.join(RUNTIME, 'monitor-heartbeat.json');
-const VERSION = '0.6.6';
+const VERSION = '0.6.7';
 const MAX_UIA_BATCH = 8;
 
 for (const dir of [RUNTIME, RUNS, MACROS]) await fs.mkdir(dir, { recursive: true });
@@ -48,7 +48,23 @@ const defaultExecution = () => ({ status: 'IDLE', runId: null, label: null, step
 async function atomicJson(file, value) {
   const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
-  await fs.rename(tmp, file);
+  let lastError = null;
+  try {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        await fs.rename(tmp, file);
+        return;
+      } catch (error) {
+        lastError = error;
+        const retryable = ['EPERM', 'EBUSY', 'EACCES'].includes(error?.code);
+        if (!retryable || attempt === 7) throw error;
+        await new Promise(resolve => setTimeout(resolve, 10 * (attempt + 1)));
+      }
+    }
+  } finally {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+  }
+  throw lastError || new Error(`Failed to atomically write ${file}`);
 }
 async function readJson(file, fallback) {
   try { return JSON.parse(await fs.readFile(file, 'utf8')); }
@@ -469,6 +485,76 @@ function runFile(id) { return path.join(RUNS, `${normalizeName(id)}.json`); }
 async function saveRun(run) { run.updatedAt = iso(); await atomicJson(runFile(run.id), run); }
 async function loadRun(id) { return JSON.parse(await fs.readFile(runFile(id), 'utf8')); }
 
+async function fingerprintArtifact(file) {
+  const resolved = path.resolve(String(file));
+  let stat;
+  try { stat = await fs.lstat(resolved); }
+  catch (error) {
+    if (error?.code === 'ENOENT') return { path: resolved, kind: 'missing' };
+    throw error;
+  }
+  if (stat.isFile()) {
+    const hash = crypto.createHash('sha256');
+    await new Promise((resolve, reject) => {
+      const stream = fssync.createReadStream(resolved);
+      stream.on('data', chunk => hash.update(chunk));
+      stream.once('error', reject);
+      stream.once('end', resolve);
+    });
+    return { path: resolved, kind: 'file', size: stat.size, sha256: hash.digest('hex') };
+  }
+  if (stat.isSymbolicLink()) return { path: resolved, kind: 'symlink', target: await fs.readlink(resolved) };
+  if (stat.isDirectory()) return { path: resolved, kind: 'directory' };
+  return { path: resolved, kind: 'other', size: stat.size };
+}
+
+function fingerprintEqual(expected, actual) {
+  if (!expected || !actual || expected.kind !== actual.kind) return false;
+  if (expected.kind === 'file') return expected.size === actual.size && expected.sha256 === actual.sha256;
+  if (expected.kind === 'symlink') return expected.target === actual.target;
+  if (expected.kind === 'other') return expected.size === actual.size;
+  return true;
+}
+
+function declaredArtifactPaths(step, result) {
+  const out = new Set();
+  const add = value => { if (typeof value === 'string' && value.trim()) out.add(path.resolve(value)); };
+  if (String(step?.kind || '').toLowerCase() === 'fs') {
+    add(step.path);
+    add(step.destination);
+    add(result?.path);
+    add(result?.from);
+    add(result?.to);
+  }
+  if (Array.isArray(step?.artifacts)) for (const value of step.artifacts) add(value);
+  return [...out];
+}
+
+async function trackStepArtifacts(run, step, result) {
+  const paths = new Set(Array.isArray(run.artifactPaths) ? run.artifactPaths : []);
+  for (const file of declaredArtifactPaths(step, result)) paths.add(file);
+  run.artifactPaths = [...paths].sort();
+}
+
+async function refreshArtifactSnapshot(run) {
+  const snapshot = {};
+  for (const file of Array.isArray(run.artifactPaths) ? run.artifactPaths : []) {
+    snapshot[file] = await fingerprintArtifact(file);
+  }
+  run.artifactSnapshot = snapshot;
+  return snapshot;
+}
+
+async function detectWorkspaceDrift(run) {
+  const expected = run.artifactSnapshot && typeof run.artifactSnapshot === 'object' ? run.artifactSnapshot : {};
+  const drift = [];
+  for (const [file, before] of Object.entries(expected)) {
+    const current = await fingerprintArtifact(file);
+    if (!fingerprintEqual(before, current)) drift.push({ path: file, expected: before, current });
+  }
+  return drift;
+}
+
 async function createRun(steps, failFast, timeoutMs, label = null) {
   const id = `run_${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}_${crypto.randomBytes(3).toString('hex')}`;
   const run = {
@@ -478,6 +564,7 @@ async function createRun(steps, failFast, timeoutMs, label = null) {
     createdAt: iso(), updatedAt: iso(), startedAt: null, completedAt: null,
     status: 'READY', failFast, timeoutMs, steps, nextIndex: 0,
     results: [], pathsUsed: [], checkpoints: [{ at: iso(), nextIndex: 0, reason: 'RUN_CREATED' }],
+    artifactPaths: [], artifactSnapshot: {}, workspaceDrift: [],
     needsReview: false, stopReason: null,
   };
   await saveRun(run);
@@ -486,7 +573,8 @@ async function createRun(steps, failFast, timeoutMs, label = null) {
 
 async function checkpoint(run, nextIndex, reason) {
   run.nextIndex = nextIndex;
-  run.checkpoints.push({ at: iso(), nextIndex, reason });
+  await refreshArtifactSnapshot(run);
+  run.checkpoints.push({ at: iso(), nextIndex, reason, artifactCount: Object.keys(run.artifactSnapshot || {}).length });
   if (run.checkpoints.length > 200) run.checkpoints = run.checkpoints.slice(-200);
   await saveRun(run);
   await logEvent('checkpoint', { runId: run.id, stepIndex: nextIndex, message: reason });
@@ -533,8 +621,10 @@ function publicResult(run, extra = {}) {
     requestedSteps: run.steps.length,
     nextStepIndex: run.nextIndex,
     completedThroughIndex: run.nextIndex - 1,
-    resumeAvailable: ['PAUSED', 'INTERRUPTED', 'FAILED', 'STOPPED', 'READY'].includes(run.status),
+    resumeAvailable: ['PAUSED', 'INTERRUPTED', 'FAILED', 'STOPPED', 'READY', 'DRIFTED'].includes(run.status),
     needsReview: !!run.needsReview,
+    workspaceDrift: Array.isArray(run.workspaceDrift) ? run.workspaceDrift : [],
+    trackedArtifactCount: Object.keys(run.artifactSnapshot || {}).length,
     pathsUsed: [...new Set(run.pathsUsed)],
     results: run.results,
     lastCheckpoint: run.checkpoints.at(-1) || null,
@@ -656,6 +746,7 @@ async function executeRun(run) {
       } else throw new Error(`Unsupported step kind: ${meta.kind}`);
 
       run.results.push({ index: i, kind: meta.kind, ok: true, elapsedMs: now() - s, result });
+      await trackStepArtifacts(run, step, result);
       await logEvent('step_completed', { runId: run.id, stepIndex: i, message: `${meta.kind}:${meta.action}` });
       i++;
       await checkpoint(run, i, 'STEP_COMPLETED');
@@ -831,14 +922,28 @@ server.registerTool('fast_run', { description: 'PRIMARY FAST PATH with live oper
           return { content: [{ type: 'text', text: JSON.stringify(await executeRun(run), null, 2) }] };
         });
 
-server.registerTool('fast_resume', { description: 'Resume a paused/interrupted/failed Fast Hands run from its durable nextStepIndex checkpoint. Hard-stopped uncertain runs require acknowledge_uncertain=true after review.', inputSchema: z.object({
+server.registerTool('fast_resume', { description: 'Resume a paused/interrupted/failed Fast Hands run from its durable nextStepIndex checkpoint. Before continuing, verifies tracked file artifacts with SHA-256 + size and blocks on workspace drift. Hard-stopped uncertain runs require acknowledge_uncertain=true after review.', inputSchema: z.object({
           run_id: z.string().min(1),
           acknowledge_uncertain: z.boolean().default(false),
         }) }, async ({ run_id, acknowledge_uncertain }) => {
           const run = await loadRun(run_id);
           if (run.status === 'RUNNING') throw new Error('Run is already RUNNING');
           if (run.needsReview && !acknowledge_uncertain) throw new Error('Run was hard-stopped during an atomic action. Review state first, then resume with acknowledge_uncertain=true only if retrying from nextStepIndex is safe.');
-          if (run.needsReview && acknowledge_uncertain) { run.needsReview = false; run.status = 'READY'; await saveRun(run); }
+          const drift = await detectWorkspaceDrift(run);
+          if (drift.length) {
+            run.status = 'DRIFTED';
+            run.stopReason = 'WORKSPACE_DRIFT_DETECTED';
+            run.workspaceDrift = drift;
+            await saveRun(run);
+            await setExecution({ status: 'DRIFTED', runId: run.id, label: run.label, stepIndex: run.nextIndex, totalSteps: run.steps.length, stepKind: null, action: null, target: null, safePoint: 'WORKSPACE_DRIFT_DETECTED', detail: `Resume blocked: ${drift.length} tracked artifact(s) changed since the last checkpoint.` });
+            await logEvent('workspace_drift', { runId: run.id, stepIndex: run.nextIndex, message: `${drift.length} tracked artifact(s) changed since checkpoint.` });
+            return { content: [{ type: 'text', text: JSON.stringify({ ok: false, code: 'WORKSPACE_DRIFT_DETECTED', status: run.status, runId: run.id, nextStepIndex: run.nextIndex, drift, message: 'Resume blocked because tracked workspace artifacts no longer match the last checkpoint.' }, null, 2) }] };
+          }
+          run.workspaceDrift = [];
+          if (run.stopReason === 'WORKSPACE_DRIFT_DETECTED') run.stopReason = null;
+          if (run.needsReview && acknowledge_uncertain) run.needsReview = false;
+          run.status = 'READY';
+          await saveRun(run);
           return { content: [{ type: 'text', text: JSON.stringify(await executeRun(run), null, 2) }] };
         });
 
@@ -976,7 +1081,7 @@ server.registerTool('fast_probe', { description: 'Measure Fast Hands paths and v
             arch: process.arch,
             elapsedMs: now() - started,
             priority: ['DIRECT_EXEC/NODE_FS','WINDOWS_UI_DIRECT','LEGACY_UIA_OPTIONAL','WEB_RESEARCH_OPTIONAL','YOUTUBE_RESEARCH_OPTIONAL','MACRO','VISUAL_FALLBACK'],
-            safety: ['SAFE_POINT_BEFORE_AND_AFTER_EACH_STEP','DURABLE_RESUME_CHECKPOINT','OPERATOR_MESSAGE_INTERRUPT','MANUAL_PAUSE','EMERGENCY_STOP','WINDOWS_UI_DIRECT_GUARDRAILS'],
+            safety: ['SAFE_POINT_BEFORE_AND_AFTER_EACH_STEP','DURABLE_RESUME_CHECKPOINT','WORKSPACE_DRIFT_SHA256','OPERATOR_MESSAGE_INTERRUPT','MANUAL_PAUSE','EMERGENCY_STOP','WINDOWS_UI_DIRECT_GUARDRAILS'],
             checks,
           }, null, 2) }] };
         });

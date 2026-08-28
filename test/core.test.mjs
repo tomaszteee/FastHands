@@ -162,6 +162,45 @@ test('core execution, degraded probe, interrupt/revise/resume', { timeout: 30000
     assert.equal(pauseResumed.status, 'COMPLETED');
     assert.equal(pauseResumed.results.at(-1).result.stdout.trim(), 'PAUSE-RESUME-OK');
 
+    const driftTarget = path.join(root, 'runtime', 'drift-artifact.txt').replaceAll('\\', '/');
+    const driftPromise = callJson(client, 'fast_run', {
+      label: 'regression-workspace-drift',
+      steps: [
+        { kind: 'fs', op: 'write', path: driftTarget, content: 'AAAA' },
+        { kind: 'wait', ms: 500 },
+        { kind: 'fs', op: 'read', path: driftTarget },
+      ],
+    });
+    await sleep(150);
+    const driftMsg = await fetch(`http://127.0.0.1:${monitorPort}/api/message`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'pause for manual workspace edit', interrupt: true }),
+    });
+    assert.equal(driftMsg.status, 200);
+    const driftInterrupted = await driftPromise;
+    assert.equal(driftInterrupted.status, 'INTERRUPTED');
+    assert.equal(driftInterrupted.nextStepIndex, 2);
+    assert.equal(driftInterrupted.trackedArtifactCount >= 1, true);
+
+    await fs.writeFile(driftTarget, 'BBBB', 'utf8');
+    const driftBlocked = await callJson(client, 'fast_resume', { run_id: driftInterrupted.runId, acknowledge_uncertain: false });
+    assert.equal(driftBlocked.ok, false);
+    assert.equal(driftBlocked.code, 'WORKSPACE_DRIFT_DETECTED');
+    assert.equal(driftBlocked.status, 'DRIFTED');
+    assert.equal(driftBlocked.nextStepIndex, 2);
+    assert.equal(driftBlocked.drift.length, 1);
+    assert.equal(driftBlocked.drift[0].path.replaceAll('\\', '/'), driftTarget);
+    assert.equal(driftBlocked.drift[0].expected.size, driftBlocked.drift[0].current.size);
+    assert.notEqual(driftBlocked.drift[0].expected.sha256, driftBlocked.drift[0].current.sha256);
+
+    const driftState = await callJson(client, 'run_state', { run_id: driftInterrupted.runId });
+    assert.equal(driftState.status, 'DRIFTED');
+    assert.equal(driftState.workspaceDrift.length, 1);
+    await fs.writeFile(driftTarget, 'AAAA', 'utf8');
+    const driftResumed = await callJson(client, 'fast_resume', { run_id: driftInterrupted.runId, acknowledge_uncertain: false });
+    assert.equal(driftResumed.status, 'COMPLETED');
+    assert.equal(driftResumed.results.at(-1).result.data, 'AAAA');
+
     const stopPromise = callJson(client, 'fast_run', {
       label: 'regression-emergency-stop',
       timeout_ms: 10000,

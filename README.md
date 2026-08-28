@@ -23,7 +23,7 @@ If the operator interrupts a run, completed work is preserved. The caller can re
 - `fast_exec` - low-latency command execution through a persistent hidden PowerShell process.
 - `fast_batch` - 1-200 PowerShell commands with separate results and checkpoints.
 - `fast_run` - mixed multi-step workflows with durable progress and operator control, including native `windows_ui` steps when Windows UI Direct is configured.
-- `fast_resume` / `fast_revise` - resume from a checkpoint or replace only the unexecuted tail.
+- `fast_resume` / `fast_revise` - resume from a checkpoint or replace only the unexecuted tail; resume verifies tracked file artifacts before continuing.
 - Local operator monitor with **RUN / PAUSE / EMERGENCY STOP** and interrupting messages.
 - Windows UI Direct adapter via a compatible `windows-mcp-server` executable.
 - Optional legacy UIA batch adapter through `FAST_HANDS_LEGACY_UIA_OPERATOR`.
@@ -180,7 +180,7 @@ FastWeb uses public search/read backends and local extraction. YouTubeResearch u
 
 Fast Hands is powerful software. A connected agent can run commands and, when UI backends are enabled, operate desktop applications.
 
-The execution engine records durable run state and checks local operator control before and after safe units. **Emergency Stop** terminates active child processes and marks the affected step as uncertain when partial execution may have occurred.
+The execution engine records durable run state and checks local operator control before and after safe units. File artifacts referenced by `fs` steps (and optional per-step `artifacts` paths) are fingerprinted with SHA-256 + size at checkpoints. `fast_resume` compares the current files with the last checkpoint and returns `WORKSPACE_DRIFT_DETECTED` instead of blindly continuing when tracked content changed. **Emergency Stop** terminates active child processes and marks the affected step as uncertain when partial execution may have occurred.
 
 Do not expose the monitor or HTTP MCP endpoint to an untrusted network without adding authenticated transport and least-privilege controls. See [SECURITY.md](SECURITY.md).
 
