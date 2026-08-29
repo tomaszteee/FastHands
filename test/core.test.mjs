@@ -172,7 +172,20 @@ test('core execution, degraded probe, interrupt/revise/resume', { timeout: 30000
         { kind: 'fs', op: 'read', path: driftTarget },
       ],
     });
-    await sleep(150);
+    const driftExecutionDeadline = Date.now() + 10000;
+    let sawDriftWaitStep = false;
+    while (Date.now() < driftExecutionDeadline) {
+      const stateResponse = await fetch(`http://127.0.0.1:${monitorPort}/api/state`);
+      if (stateResponse.ok) {
+        const state = await stateResponse.json();
+        if (state.execution?.status === 'RUNNING' && state.execution?.stepIndex === 1 && state.execution?.safePoint === 'CURRENT_ATOMIC_ACTION') {
+          sawDriftWaitStep = true;
+          break;
+        }
+      }
+      await sleep(20);
+    }
+    assert.equal(sawDriftWaitStep, true, 'workspace drift wait step never became active');
     const driftMsg = await fetch(`http://127.0.0.1:${monitorPort}/api/message`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: 'pause for manual workspace edit', interrupt: true }),
