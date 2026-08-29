@@ -33,7 +33,7 @@ const OUTBOX_FILE = path.join(RUNTIME, 'assistant-outbox.jsonl');
 const EVENTS_FILE = path.join(RUNTIME, 'events.jsonl');
 const DELIVERY_FILE = path.join(RUNTIME, 'delivery.json');
 const HEARTBEAT_FILE = path.join(RUNTIME, 'monitor-heartbeat.json');
-const VERSION = '0.6.7';
+const VERSION = '0.6.8';
 const MAX_UIA_BATCH = 8;
 
 for (const dir of [RUNTIME, RUNS, MACROS]) await fs.mkdir(dir, { recursive: true });
@@ -555,6 +555,151 @@ async function detectWorkspaceDrift(run) {
   return drift;
 }
 
+function stableJsonValue(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, stableJsonValue(value[key])]));
+}
+
+function jsonSha256(value) {
+  const text = JSON.stringify(stableJsonValue(value)) ?? 'null';
+  return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+function externalEffectSpec(step) {
+  const raw = step?.external_effect;
+  if (raw === undefined || raw === null) return null;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('external_effect must be an object');
+  const operationId = String(raw.operation_id || '').trim();
+  const target = String(raw.target || '').trim();
+  if (!operationId) throw new Error('external_effect.operation_id is required');
+  if (!target) throw new Error('external_effect.target is required');
+  const kind = String(step?.kind || '').toLowerCase();
+  const confirmation = String(raw.confirmation || (['windows_ui', 'uia'].includes(kind) ? 'reconcile' : 'execution')).toLowerCase();
+  if (!['execution', 'reconcile'].includes(confirmation)) throw new Error('external_effect.confirmation must be execution or reconcile');
+  let payloadHash = raw.payload_hash ? String(raw.payload_hash).trim().toLowerCase() : '';
+  if (payloadHash && !/^[a-f0-9]{64}$/.test(payloadHash)) throw new Error('external_effect.payload_hash must be a 64-character SHA-256 hex string');
+  if (!payloadHash) {
+    const payload = Object.prototype.hasOwnProperty.call(raw, 'payload')
+      ? raw.payload
+      : Object.fromEntries(Object.entries(step).filter(([key]) => !['external_effect', 'artifacts', 'checkpoint'].includes(key)));
+    payloadHash = jsonSha256(payload);
+  }
+  return { operationId, target, payloadHash, confirmation };
+}
+
+function externalEffects(run) {
+  if (!Array.isArray(run.externalEffects)) run.externalEffects = [];
+  return run.externalEffects;
+}
+
+function unresolvedExternalEffects(run) {
+  return externalEffects(run).filter(effect => effect?.outcome === 'unknown');
+}
+
+function externalEffectPublic(effect) {
+  if (!effect) return null;
+  return {
+    operationId: effect.operationId,
+    stepIndex: effect.stepIndex,
+    target: effect.target,
+    payloadHash: effect.payloadHash,
+    confirmation: effect.confirmation,
+    outcome: effect.outcome,
+    attempt: effect.attempt,
+    preparedAt: effect.preparedAt || null,
+    confirmedAt: effect.confirmedAt || null,
+    reconciledAt: effect.reconciledAt || null,
+    lastError: effect.lastError || null,
+    receipt: effect.receipt || null,
+    readback: effect.readback || null,
+  };
+}
+
+function boundedExternalMetadata(value, field) {
+  if (value === undefined) return undefined;
+  const text = JSON.stringify(value);
+  if (text === undefined) throw new Error(`${field} must be JSON-serializable`);
+  if (Buffer.byteLength(text, 'utf8') > 32768) throw new Error(`${field} must be <= 32768 bytes`);
+  return value;
+}
+
+async function prepareExternalEffect(run, step, stepIndex) {
+  const spec = externalEffectSpec(step);
+  if (!spec) return null;
+  const effects = externalEffects(run);
+  let effect = effects.find(item => item.operationId === spec.operationId) || null;
+  if (effect) {
+    if (effect.stepIndex !== stepIndex || effect.target !== spec.target || effect.payloadHash !== spec.payloadHash) {
+      throw new Error(`External operation_id conflict: ${spec.operationId} is already bound to a different step, target, or payload`);
+    }
+    if (effect.outcome === 'confirmed') return { spec, effect, skip: true };
+    if (effect.outcome === 'unknown') return { spec, effect, blocked: true };
+    effect.history = Array.isArray(effect.history) ? effect.history : [];
+    effect.history.push({ attempt: effect.attempt || 1, outcome: effect.outcome, at: effect.reconciledAt || effect.confirmedAt || iso() });
+    if (effect.history.length > 50) effect.history = effect.history.slice(-50);
+    effect.attempt = Number(effect.attempt || 1) + 1;
+    effect.outcome = 'unknown';
+    effect.preparedAt = iso();
+    effect.confirmedAt = null;
+    effect.reconciledAt = null;
+    effect.lastError = null;
+    effect.receipt = null;
+    effect.readback = null;
+  } else {
+    effect = {
+      operationId: spec.operationId,
+      stepIndex,
+      target: spec.target,
+      payloadHash: spec.payloadHash,
+      confirmation: spec.confirmation,
+      outcome: 'unknown',
+      attempt: 1,
+      preparedAt: iso(),
+      confirmedAt: null,
+      reconciledAt: null,
+      lastError: null,
+      receipt: null,
+      readback: null,
+      history: [],
+    };
+    effects.push(effect);
+  }
+  effect.confirmation = spec.confirmation;
+  await checkpoint(run, stepIndex, 'EXTERNAL_EFFECT_PREPARED');
+  await logEvent('external_effect_prepared', { runId: run.id, stepIndex, operationId: spec.operationId, target: spec.target, message: `External effect prepared as unknown (attempt ${effect.attempt}).` });
+  return { spec, effect, skip: false, blocked: false };
+}
+
+async function recordExternalSuccess(run, prepared, result) {
+  if (!prepared?.effect) return { reconciliationRequired: false };
+  const effect = prepared.effect;
+  const resultHash = jsonSha256(result);
+  effect.lastError = null;
+  effect.receipt = { source: 'execution_result', sha256: resultHash };
+  if (prepared.spec.confirmation === 'execution') {
+    effect.outcome = 'confirmed';
+    effect.confirmedAt = iso();
+    await saveRun(run);
+    await logEvent('external_effect_confirmed', { runId: run.id, stepIndex: effect.stepIndex, operationId: effect.operationId, target: effect.target, message: 'External effect confirmed by successful execution result.' });
+    return { reconciliationRequired: false };
+  }
+  effect.outcome = 'unknown';
+  await saveRun(run);
+  await logEvent('external_effect_reconciliation_required', { runId: run.id, stepIndex: effect.stepIndex, operationId: effect.operationId, target: effect.target, message: 'Execution returned, but external read-back is required before the step is considered complete.' });
+  return { reconciliationRequired: true };
+}
+
+async function recordExternalFailure(run, prepared, error, result) {
+  if (!prepared?.effect) return;
+  const effect = prepared.effect;
+  effect.outcome = 'unknown';
+  effect.lastError = error?.message || String(error);
+  if (result !== undefined) effect.receipt = { source: 'execution_result', sha256: jsonSha256(result) };
+  await saveRun(run);
+  await logEvent('external_effect_reconciliation_required', { runId: run.id, stepIndex: effect.stepIndex, operationId: effect.operationId, target: effect.target, message: `External effect outcome is unknown after execution failure: ${effect.lastError}` });
+}
+
 async function createRun(steps, failFast, timeoutMs, label = null) {
   const id = `run_${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}_${crypto.randomBytes(3).toString('hex')}`;
   const run = {
@@ -565,6 +710,7 @@ async function createRun(steps, failFast, timeoutMs, label = null) {
     status: 'READY', failFast, timeoutMs, steps, nextIndex: 0,
     results: [], pathsUsed: [], checkpoints: [{ at: iso(), nextIndex: 0, reason: 'RUN_CREATED' }],
     artifactPaths: [], artifactSnapshot: {}, workspaceDrift: [],
+    externalEffects: [],
     needsReview: false, stopReason: null,
   };
   await saveRun(run);
@@ -621,10 +767,12 @@ function publicResult(run, extra = {}) {
     requestedSteps: run.steps.length,
     nextStepIndex: run.nextIndex,
     completedThroughIndex: run.nextIndex - 1,
-    resumeAvailable: ['PAUSED', 'INTERRUPTED', 'FAILED', 'STOPPED', 'READY', 'DRIFTED'].includes(run.status),
+    resumeAvailable: ['PAUSED', 'INTERRUPTED', 'FAILED', 'STOPPED', 'READY', 'DRIFTED', 'RECONCILIATION_REQUIRED'].includes(run.status),
     needsReview: !!run.needsReview,
     workspaceDrift: Array.isArray(run.workspaceDrift) ? run.workspaceDrift : [],
     trackedArtifactCount: Object.keys(run.artifactSnapshot || {}).length,
+    externalEffects: externalEffects(run).map(externalEffectPublic),
+    unresolvedExternalEffects: unresolvedExternalEffects(run).map(externalEffectPublic),
     pathsUsed: [...new Set(run.pathsUsed)],
     results: run.results,
     lastCheckpoint: run.checkpoints.at(-1) || null,
@@ -645,10 +793,10 @@ async function executeRun(run) {
     const gate = await safePoint(run, 'BEFORE_STEP');
     if (gate.interrupt) return publicResult(run, { interrupted: true, interruptReason: gate.reason, operatorMessages: gate.messages });
 
-    if (isUia(run.steps[i])) {
+    if (isUia(run.steps[i]) && !run.steps[i]?.external_effect) {
       const blockStart = i;
       const block = [];
-      while (i < run.steps.length && isUia(run.steps[i]) && block.length < MAX_UIA_BATCH) {
+      while (i < run.steps.length && isUia(run.steps[i]) && !run.steps[i]?.external_effect && block.length < MAX_UIA_BATCH) {
         block.push(toUiaStep(run.steps[i]));
         i++;
         if (run.steps[i - 1]?.checkpoint === true) break;
@@ -682,7 +830,35 @@ async function executeRun(run) {
     const step = run.steps[i];
     const meta = stepMeta(step);
     const s = now();
-    await setExecution({ status: 'RUNNING', runId: run.id, label: run.label, stepIndex: i, totalSteps: run.steps.length, stepKind: meta.kind, action: meta.action, target: meta.target, safePoint: 'CURRENT_ATOMIC_ACTION', detail: 'Executing atomic action.' });
+    let preparedExternal = null;
+    try {
+      preparedExternal = await prepareExternalEffect(run, step, i);
+    } catch (error) {
+      run.results.push({ index: i, kind: meta.kind, ok: false, elapsedMs: now() - s, error: error?.message || String(error) });
+      run.status = 'FAILED'; run.nextIndex = i; await saveRun(run);
+      await setExecution({ status: 'FAILED', runId: run.id, label: run.label, stepIndex: i, totalSteps: run.steps.length, stepKind: meta.kind, action: meta.action, target: meta.target, safePoint: 'FAILED_STEP', detail: error?.message || String(error) });
+      await logEvent('step_failed', { runId: run.id, stepIndex: i, message: error?.message || String(error) });
+      return publicResult(run, { interrupted: false, error: error?.message || String(error) });
+    }
+    if (preparedExternal?.blocked) {
+      run.status = 'RECONCILIATION_REQUIRED'; run.stopReason = 'EXTERNAL_RECONCILIATION_REQUIRED'; run.nextIndex = i;
+      await saveRun(run);
+      await setExecution({ status: 'RECONCILIATION_REQUIRED', runId: run.id, label: run.label, stepIndex: i, totalSteps: run.steps.length, stepKind: meta.kind, action: meta.action, target: preparedExternal.spec.target, safePoint: 'EXTERNAL_RECONCILIATION_REQUIRED', detail: `External operation ${preparedExternal.spec.operationId} has unknown outcome; read-back is required before retry.` });
+      return publicResult(run, { interrupted: true, interruptReason: 'EXTERNAL_RECONCILIATION_REQUIRED', code: 'EXTERNAL_RECONCILIATION_REQUIRED' });
+    }
+    if (preparedExternal?.skip) {
+      if (!run.results.some(entry => entry.index === i && entry.ok)) {
+        run.results.push({ index: i, kind: meta.kind, ok: true, elapsedMs: 0, externalOperationId: preparedExternal.spec.operationId, result: { ok: true, reconciled: true, skippedReplay: true, operationId: preparedExternal.spec.operationId, target: preparedExternal.spec.target } });
+      }
+      await logEvent('external_effect_replay_skipped', { runId: run.id, stepIndex: i, operationId: preparedExternal.spec.operationId, target: preparedExternal.spec.target, message: 'External effect is already confirmed; replay skipped.' });
+      i++;
+      await checkpoint(run, i, 'EXTERNAL_EFFECT_ALREADY_CONFIRMED');
+      const afterConfirmed = await safePoint(run, 'AFTER_STEP');
+      if (afterConfirmed.interrupt) return publicResult(run, { interrupted: true, interruptReason: afterConfirmed.reason, operatorMessages: afterConfirmed.messages });
+      continue;
+    }
+
+    await setExecution({ status: 'RUNNING', runId: run.id, label: run.label, stepIndex: i, totalSteps: run.steps.length, stepKind: meta.kind, action: meta.action, target: preparedExternal?.spec?.target || meta.target, safePoint: 'CURRENT_ATOMIC_ACTION', detail: preparedExternal ? `Executing external operation ${preparedExternal.spec.operationId}.` : 'Executing atomic action.' });
     await logEvent('step_started', { runId: run.id, stepIndex: i, message: `${meta.kind}:${meta.action}` });
 
     let result;
@@ -704,7 +880,8 @@ async function executeRun(run) {
         run.pathsUsed.push('DIRECT_EXEC');
         result = await runProcess(String(step.program), Array.isArray(step.args) ? step.args : [], { cwd: step.cwd, timeoutMs: step.timeout_ms ?? run.timeoutMs, env: step.env });
         if (result.emergencyStopped) {
-          run.results.push({ index: i, kind: meta.kind, ok: false, elapsedMs: now() - s, result });
+          run.results.push({ index: i, kind: meta.kind, ok: false, elapsedMs: now() - s, externalOperationId: preparedExternal?.spec?.operationId || null, result });
+          if (preparedExternal) await recordExternalFailure(run, preparedExternal, new Error('Emergency stop during external process'), result);
           run.status = 'STOPPED'; run.needsReview = true; run.stopReason = 'HARD_STOP_DURING_PROCESS'; run.nextIndex = i;
           await saveRun(run);
           await setExecution({ status: 'STOPPED', runId: run.id, label: run.label, stepIndex: i, totalSteps: run.steps.length, stepKind: meta.kind, safePoint: 'UNCERTAIN_AFTER_HARD_STOP', detail: 'Child process was terminated by emergency stop. Review before retry.' });
@@ -716,7 +893,8 @@ async function executeRun(run) {
         run.pathsUsed.push('POWERSHELL_PERSISTENT');
         result = await persistentPowerShell.execute(String(step.command || ''), { cwd: step.cwd, timeoutMs: step.timeout_ms ?? run.timeoutMs, maxBuffer: step.max_output_bytes });
         if (result.emergencyStopped) {
-          run.results.push({ index: i, kind: meta.kind, ok: false, elapsedMs: now() - s, result });
+          run.results.push({ index: i, kind: meta.kind, ok: false, elapsedMs: now() - s, externalOperationId: preparedExternal?.spec?.operationId || null, result });
+          if (preparedExternal) await recordExternalFailure(run, preparedExternal, new Error('Emergency stop during external process'), result);
           run.status = 'STOPPED'; run.needsReview = true; run.stopReason = 'HARD_STOP_DURING_PROCESS'; run.nextIndex = i;
           await saveRun(run);
           await setExecution({ status: 'STOPPED', runId: run.id, label: run.label, stepIndex: i, totalSteps: run.steps.length, stepKind: meta.kind, safePoint: 'UNCERTAIN_AFTER_HARD_STOP', detail: 'PowerShell was terminated by emergency stop. Review before retry.' });
@@ -724,6 +902,19 @@ async function executeRun(run) {
           return publicResult(run, { interrupted: true, interruptReason: 'EMERGENCY_STOP', operatorMessages: await pendingOperatorMessages() });
         }
         if (!result.ok) throw new Error(result.error || result.stderr || 'powershell failed');
+      } else if (meta.kind === 'uia') {
+        if (!OPERATOR) throw new Error('legacy uia requires FAST_HANDS_LEGACY_UIA_OPERATOR');
+        run.pathsUsed.push('UIA_BATCH');
+        result = await runUiaBlock([toUiaStep(step)], true, step.timeout_ms ?? run.timeoutMs);
+        if (result.emergencyStopped) {
+          run.results.push({ index: i, kind: meta.kind, ok: false, elapsedMs: now() - s, externalOperationId: preparedExternal?.spec?.operationId || null, result });
+          if (preparedExternal) await recordExternalFailure(run, preparedExternal, new Error('Emergency stop during external UI action'), result);
+          run.status = 'STOPPED'; run.needsReview = true; run.stopReason = 'HARD_STOP_DURING_UIA'; run.nextIndex = i;
+          await saveRun(run);
+          await setExecution({ status: 'STOPPED', runId: run.id, label: run.label, stepIndex: i, totalSteps: run.steps.length, stepKind: meta.kind, safePoint: 'UNCERTAIN_AFTER_HARD_STOP', detail: 'Legacy UI action was hard-stopped; external outcome may be unknown.' });
+          return publicResult(run, { interrupted: true, interruptReason: 'EMERGENCY_STOP', operatorMessages: await pendingOperatorMessages() });
+        }
+        if (!result.ok) throw new Error(result.error || 'legacy UI action failed');
       } else if (meta.kind === 'windows_ui') {
         if (!IS_WINDOWS) throw new Error('windows_ui is available only on Windows');
         if (!step.tool) throw new Error('windows_ui requires tool');
@@ -745,14 +936,28 @@ async function executeRun(run) {
         }
       } else throw new Error(`Unsupported step kind: ${meta.kind}`);
 
-      run.results.push({ index: i, kind: meta.kind, ok: true, elapsedMs: now() - s, result });
+      run.results.push({ index: i, kind: meta.kind, ok: true, elapsedMs: now() - s, externalOperationId: preparedExternal?.spec?.operationId || null, result });
       await trackStepArtifacts(run, step, result);
+      const externalState = await recordExternalSuccess(run, preparedExternal, result);
       await logEvent('step_completed', { runId: run.id, stepIndex: i, message: `${meta.kind}:${meta.action}` });
+      if (externalState.reconciliationRequired) {
+        run.status = 'RECONCILIATION_REQUIRED'; run.stopReason = 'EXTERNAL_RECONCILIATION_REQUIRED'; run.nextIndex = i;
+        await saveRun(run);
+        await setExecution({ status: 'RECONCILIATION_REQUIRED', runId: run.id, label: run.label, stepIndex: i, totalSteps: run.steps.length, stepKind: meta.kind, action: meta.action, target: preparedExternal.spec.target, safePoint: 'EXTERNAL_RECONCILIATION_REQUIRED', detail: `External operation ${preparedExternal.spec.operationId} executed, but read-back is required before it can be marked complete.` });
+        return publicResult(run, { interrupted: true, interruptReason: 'EXTERNAL_RECONCILIATION_REQUIRED', code: 'EXTERNAL_RECONCILIATION_REQUIRED' });
+      }
       i++;
       await checkpoint(run, i, 'STEP_COMPLETED');
     } catch (error) {
-      run.results.push({ index: i, kind: meta.kind, ok: false, elapsedMs: now() - s, error: error?.message || String(error), result });
+      run.results.push({ index: i, kind: meta.kind, ok: false, elapsedMs: now() - s, externalOperationId: preparedExternal?.spec?.operationId || null, error: error?.message || String(error), result });
       await logEvent('step_failed', { runId: run.id, stepIndex: i, message: error?.message || String(error) });
+      if (preparedExternal) {
+        await recordExternalFailure(run, preparedExternal, error, result);
+        run.status = 'RECONCILIATION_REQUIRED'; run.stopReason = 'EXTERNAL_RECONCILIATION_REQUIRED'; run.nextIndex = i;
+        await saveRun(run);
+        await setExecution({ status: 'RECONCILIATION_REQUIRED', runId: run.id, label: run.label, stepIndex: i, totalSteps: run.steps.length, stepKind: meta.kind, action: meta.action, target: preparedExternal.spec.target, safePoint: 'EXTERNAL_RECONCILIATION_REQUIRED', detail: `External operation ${preparedExternal.spec.operationId} failed or timed out with unknown remote outcome. Read-back is required before retry.` });
+        return publicResult(run, { interrupted: true, interruptReason: 'EXTERNAL_RECONCILIATION_REQUIRED', code: 'EXTERNAL_RECONCILIATION_REQUIRED', error: error?.message || String(error) });
+      }
       if (run.failFast) {
         run.status = 'FAILED'; run.nextIndex = i; await saveRun(run);
         await setExecution({ status: 'FAILED', runId: run.id, label: run.label, stepIndex: i, totalSteps: run.steps.length, stepKind: meta.kind, action: meta.action, target: meta.target, safePoint: 'FAILED_STEP', detail: error?.message || String(error) });
@@ -766,7 +971,7 @@ async function executeRun(run) {
     if (after.interrupt) return publicResult(run, { interrupted: true, interruptReason: after.reason, operatorMessages: after.messages });
   }
 
-  run.status = run.results.every(r => r.ok) ? 'COMPLETED' : 'COMPLETED_WITH_ERRORS';
+  run.status = run.results.every(r => r.ok || ['confirmed', 'failed'].includes(r.externalReconciliation)) ? 'COMPLETED' : 'COMPLETED_WITH_ERRORS';
   run.completedAt = iso(); run.nextIndex = run.steps.length;
   await saveRun(run);
   const pending = await pendingOperatorMessages();
@@ -912,7 +1117,7 @@ server.registerTool('fast_batch', { description: 'Execute 1-200 PowerShell comma
           }, null, 2) }] };
         });
 
-server.registerTool('fast_run', { description: 'PRIMARY FAST PATH with live operator control. Executes many actions, persists a checkpoint after every safe unit, and returns immediately to the calling assistant when the operator sends an interrupting errata or presses Pause. Emergency Stop terminates child processes and marks uncertain work for review.', inputSchema: z.object({
+server.registerTool('fast_run', { description: 'PRIMARY FAST PATH with live operator control. Executes many actions and persists safe-unit checkpoints. For a step that mutates remote/browser/API state, declare external_effect with stable operation_id + target and payload or payload_hash; UI mutations default to confirmation=reconcile. Unknown external outcomes block replay until fast_reconcile_external records read-back. Operator errata/Pause return at safe points; Emergency Stop marks uncertain work for review.', inputSchema: z.object({
           steps: z.array(z.any()).min(1).max(200),
           fail_fast: z.boolean().default(true),
           timeout_ms: z.number().int().min(100).max(600000).default(30000),
@@ -922,12 +1127,21 @@ server.registerTool('fast_run', { description: 'PRIMARY FAST PATH with live oper
           return { content: [{ type: 'text', text: JSON.stringify(await executeRun(run), null, 2) }] };
         });
 
-server.registerTool('fast_resume', { description: 'Resume a paused/interrupted/failed Fast Hands run from its durable nextStepIndex checkpoint. Before continuing, verifies tracked file artifacts with SHA-256 + size and blocks on workspace drift. Hard-stopped uncertain runs require acknowledge_uncertain=true after review.', inputSchema: z.object({
+server.registerTool('fast_resume', { description: 'Resume a Fast Hands run from its durable nextStepIndex checkpoint. Before continuing, verifies tracked file artifacts with SHA-256 + size and blocks on workspace drift. It also refuses to replay any declared external_effect whose outcome is unknown; perform remote read-back and call fast_reconcile_external first. Hard-stopped uncertain runs require acknowledge_uncertain=true after review.', inputSchema: z.object({
           run_id: z.string().min(1),
           acknowledge_uncertain: z.boolean().default(false),
         }) }, async ({ run_id, acknowledge_uncertain }) => {
           const run = await loadRun(run_id);
           if (run.status === 'RUNNING') throw new Error('Run is already RUNNING');
+          const unresolvedExternal = unresolvedExternalEffects(run);
+          if (unresolvedExternal.length) {
+            run.status = 'RECONCILIATION_REQUIRED';
+            run.stopReason = 'EXTERNAL_RECONCILIATION_REQUIRED';
+            await saveRun(run);
+            await setExecution({ status: 'RECONCILIATION_REQUIRED', runId: run.id, label: run.label, stepIndex: run.nextIndex, totalSteps: run.steps.length, stepKind: null, action: null, target: unresolvedExternal[0]?.target || null, safePoint: 'EXTERNAL_RECONCILIATION_REQUIRED', detail: `Resume blocked: ${unresolvedExternal.length} external operation(s) have unknown outcome and require read-back.` });
+            await logEvent('external_effect_reconciliation_required', { runId: run.id, stepIndex: run.nextIndex, message: `${unresolvedExternal.length} external operation(s) block resume until reconciliation.` });
+            return { content: [{ type: 'text', text: JSON.stringify({ ok: false, code: 'EXTERNAL_RECONCILIATION_REQUIRED', status: run.status, runId: run.id, nextStepIndex: run.nextIndex, externalEffects: unresolvedExternal.map(externalEffectPublic), message: 'Resume blocked because one or more external side effects have unknown outcome. Read back the remote system and call fast_reconcile_external before retrying.' }, null, 2) }] };
+          }
           if (run.needsReview && !acknowledge_uncertain) throw new Error('Run was hard-stopped during an atomic action. Review state first, then resume with acknowledge_uncertain=true only if retrying from nextStepIndex is safe.');
           const drift = await detectWorkspaceDrift(run);
           if (drift.length) {
@@ -947,6 +1161,46 @@ server.registerTool('fast_resume', { description: 'Resume a paused/interrupted/f
           return { content: [{ type: 'text', text: JSON.stringify(await executeRun(run), null, 2) }] };
         });
 
+server.registerTool('fast_reconcile_external', { description: 'Resolve an external side effect whose outcome is unknown. After read-back, mark it confirmed to skip replay or failed to allow a retry of the same operation identity/payload.', inputSchema: z.object({
+          run_id: z.string().min(1),
+          operation_id: z.string().min(1),
+          outcome: z.enum(['confirmed', 'failed']),
+          receipt: z.any().optional(),
+          readback: z.any().optional(),
+          note: z.string().max(1000).optional(),
+        }) }, async ({ run_id, operation_id, outcome, receipt, readback, note }) => {
+          const run = await loadRun(run_id);
+          if (run.status === 'RUNNING') throw new Error('Cannot reconcile a RUNNING run');
+          const effect = externalEffects(run).find(item => item.operationId === operation_id);
+          if (!effect) throw new Error(`External operation not found: ${operation_id}`);
+          if (effect.outcome !== 'unknown') {
+            if (effect.outcome === outcome) return { content: [{ type: 'text', text: JSON.stringify({ ok: true, alreadyReconciled: true, runId: run.id, nextStepIndex: run.nextIndex, externalEffect: externalEffectPublic(effect) }, null, 2) }] };
+            throw new Error(`External operation ${operation_id} is already ${effect.outcome}; refusing to overwrite reconciliation`);
+          }
+          const receiptValue = boundedExternalMetadata(receipt, 'receipt');
+          const readbackValue = boundedExternalMetadata(readback, 'readback');
+          effect.outcome = outcome;
+          effect.reconciledAt = iso();
+          if (outcome === 'confirmed') effect.confirmedAt = effect.reconciledAt;
+          if (receiptValue !== undefined) effect.receipt = receiptValue;
+          if (readbackValue !== undefined) effect.readback = readbackValue;
+          effect.reconciliationNote = note || null;
+          const matchingResults = run.results.filter(entry => entry.index === effect.stepIndex && entry.externalOperationId === effect.operationId);
+          if (matchingResults.length) matchingResults.at(-1).externalReconciliation = outcome;
+          run.status = 'READY';
+          if (run.stopReason === 'EXTERNAL_RECONCILIATION_REQUIRED') run.stopReason = null;
+          if (outcome === 'confirmed' && run.nextIndex === effect.stepIndex) {
+            if (!matchingResults.some(entry => entry.ok)) {
+              run.results.push({ index: effect.stepIndex, kind: 'external-reconciled', ok: true, elapsedMs: 0, externalOperationId: effect.operationId, externalReconciliation: 'confirmed', result: { ok: true, reconciled: true, skippedReplay: true, operationId: effect.operationId, target: effect.target } });
+            }
+            await checkpoint(run, effect.stepIndex + 1, 'EXTERNAL_EFFECT_RECONCILED_CONFIRMED');
+          } else {
+            await checkpoint(run, run.nextIndex, outcome === 'failed' ? 'EXTERNAL_EFFECT_RECONCILED_FAILED_SAFE_TO_RETRY' : 'EXTERNAL_EFFECT_RECONCILED');
+          }
+          await logEvent('external_effect_reconciled', { runId: run.id, stepIndex: effect.stepIndex, operationId: effect.operationId, target: effect.target, message: `External effect reconciled as ${outcome}.` });
+          return { content: [{ type: 'text', text: JSON.stringify({ ok: true, runId: run.id, status: run.status, nextStepIndex: run.nextIndex, safeToRetry: outcome === 'failed', externalEffect: externalEffectPublic(effect) }, null, 2) }] };
+        });
+
 server.registerTool('fast_revise', { description: 'After an operator errata, replace only the NOT-YET-EXECUTED tail of a paused/interrupted run while preserving completed results/checkpoints. Then use fast_resume.', inputSchema: z.object({
           run_id: z.string().min(1),
           remaining_steps: z.array(z.any()).max(200),
@@ -954,6 +1208,7 @@ server.registerTool('fast_revise', { description: 'After an operator errata, rep
         }) }, async ({ run_id, remaining_steps, note }) => {
           const run = await loadRun(run_id);
           if (run.status === 'RUNNING') throw new Error('Cannot revise a RUNNING run');
+          if (unresolvedExternalEffects(run).length) throw new Error('Cannot revise while an external side effect has unknown outcome. Reconcile it first with fast_reconcile_external.');
           if (run.needsReview) throw new Error('Cannot revise until uncertain hard-stop state is reviewed');
           const prefix = run.steps.slice(0, run.nextIndex);
           run.steps = [...prefix, ...remaining_steps];
@@ -1081,7 +1336,7 @@ server.registerTool('fast_probe', { description: 'Measure Fast Hands paths and v
             arch: process.arch,
             elapsedMs: now() - started,
             priority: ['DIRECT_EXEC/NODE_FS','WINDOWS_UI_DIRECT','LEGACY_UIA_OPTIONAL','WEB_RESEARCH_OPTIONAL','YOUTUBE_RESEARCH_OPTIONAL','MACRO','VISUAL_FALLBACK'],
-            safety: ['SAFE_POINT_BEFORE_AND_AFTER_EACH_STEP','DURABLE_RESUME_CHECKPOINT','WORKSPACE_DRIFT_SHA256','OPERATOR_MESSAGE_INTERRUPT','MANUAL_PAUSE','EMERGENCY_STOP','WINDOWS_UI_DIRECT_GUARDRAILS'],
+            safety: ['SAFE_POINT_BEFORE_AND_AFTER_EACH_STEP','DURABLE_RESUME_CHECKPOINT','WORKSPACE_DRIFT_SHA256','EXTERNAL_EFFECT_IDEMPOTENCY','EXTERNAL_RECONCILIATION_GATE','OPERATOR_MESSAGE_INTERRUPT','MANUAL_PAUSE','EMERGENCY_STOP','WINDOWS_UI_DIRECT_GUARDRAILS'],
             checks,
           }, null, 2) }] };
         });

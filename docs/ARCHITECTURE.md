@@ -14,6 +14,8 @@ Fast Hands runs as an MCP server over stdio or loopback HTTP on Windows, Linux a
 
 Every normal step has a safe point before and after execution. Operator messages and Pause requests return control at safe points. Emergency Stop terminates active process work and marks uncertain state when partial execution is possible.
 
+Steps that declare `external_effect` add a second durability layer for remote mutations. Fast Hands writes a stable operation ID, target and payload fingerprint with outcome `unknown` before the action begins. A successful execution can confirm the effect immediately, or the caller can require explicit remote reconciliation. Unknown outcomes block resume/revise until `fast_reconcile_external` records read-back as `confirmed` or `failed`.
+
 ## Optional research
 
 FastWeb and YouTubeResearch are bundled as source but use a separate Python virtual environment. They are optional and do not change core health semantics.

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.8] - 2026-08-29
+
+### External side-effect reconciliation
+
+- adds durable pre-action external-effect records with stable `operation_id`, target, SHA-256 payload fingerprint, attempt number and `confirmed` / `failed` / `unknown` outcome,
+- blocks `fast_resume` and `fast_revise` while any declared external effect remains `unknown`, preventing blind replay after a crash, timeout, or uncertain browser/API mutation,
+- adds `fast_reconcile_external` so remote read-back can mark an operation `confirmed` (skip replay) or `failed` (controlled retry),
+- supports strict `confirmation: "reconcile"` mode for actions where a successful local call does not prove the remote write committed; UI actions default to this mode,
+- rejects reuse of an operation ID with a different step, target, or payload fingerprint,
+- adds regression coverage for confirmed no-replay, timeout-after-effect reconciliation, failed-safe-to-retry, explicit read-back mode, and existing workspace-drift compatibility.
+
 ## [0.6.7] - 2026-08-28
 
 - hardens atomic runtime-state writes with bounded retries for transient Windows file-lock errors (`EPERM`/`EBUSY`/`EACCES`).

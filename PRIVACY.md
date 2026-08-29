@@ -4,7 +4,7 @@ Fast Hands is designed for local operation.
 
 ## Data stored locally
 
-The runtime directory can contain execution checkpoints, commands, paths, operator messages, event metadata, screenshots requested by the caller, and research outputs. `runtime/` is excluded from Git and from npm packaging.
+The runtime directory can contain execution checkpoints, commands, paths, operator messages, event metadata, screenshots requested by the caller, research outputs, and declared external-effect records (operation IDs, targets, payload SHA-256 fingerprints, outcomes, and optional receipt/read-back metadata). `runtime/` is excluded from Git and from npm packaging.
 
 Optional YouTube research may write transcripts, downloaded audio during local Whisper processing, and extracted frames into a caller-selected local output directory. Optional FastWeb may retrieve public web pages requested by the caller.
 

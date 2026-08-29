@@ -9,6 +9,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const psQuote = value => `'${String(value).replaceAll("'", "''")}'`;
 
 async function freePort() {
   return await new Promise((resolve, reject) => {
@@ -200,6 +201,105 @@ test('core execution, degraded probe, interrupt/revise/resume', { timeout: 30000
     const driftResumed = await callJson(client, 'fast_resume', { run_id: driftInterrupted.runId, acknowledge_uncertain: false });
     assert.equal(driftResumed.status, 'COMPLETED');
     assert.equal(driftResumed.results.at(-1).result.data, 'AAAA');
+
+    const confirmedPath = path.join(root, 'runtime', 'external-confirmed.txt');
+    const confirmedRun = await callJson(client, 'fast_run', {
+      label: 'regression-external-confirmed',
+      steps: [{
+        kind: 'powershell',
+        command: `Add-Content -LiteralPath ${psQuote(confirmedPath)} -Value 'once'`,
+        external_effect: { operation_id: 'reg-confirmed-op', target: 'test://confirmed', payload: { value: 'once' }, confirmation: 'execution' },
+      }],
+    });
+    assert.equal(confirmedRun.status, 'COMPLETED');
+    assert.equal(confirmedRun.externalEffects.length, 1);
+    assert.equal(confirmedRun.externalEffects[0].outcome, 'confirmed');
+    const confirmedResume = await callJson(client, 'fast_resume', { run_id: confirmedRun.runId, acknowledge_uncertain: false });
+    assert.equal(confirmedResume.status, 'COMPLETED');
+    assert.equal((await fs.readFile(confirmedPath, 'utf8')).trim().split(/\r?\n/).filter(Boolean).length, 1);
+
+    const timeoutPath = path.join(root, 'runtime', 'external-timeout.txt');
+    const timeoutRun = await callJson(client, 'fast_run', {
+      label: 'regression-external-timeout',
+      timeout_ms: 200,
+      steps: [{
+        kind: 'powershell',
+        timeout_ms: 200,
+        command: `Add-Content -LiteralPath ${psQuote(timeoutPath)} -Value 'committed'; Start-Sleep -Milliseconds 1000`,
+        external_effect: { operation_id: 'reg-timeout-op', target: 'test://publish', payload: { value: 'committed' }, confirmation: 'execution' },
+      }],
+    });
+    assert.equal(timeoutRun.status, 'RECONCILIATION_REQUIRED');
+    assert.equal(timeoutRun.code, 'EXTERNAL_RECONCILIATION_REQUIRED');
+    assert.equal(timeoutRun.unresolvedExternalEffects.length, 1);
+    assert.equal(timeoutRun.unresolvedExternalEffects[0].outcome, 'unknown');
+    assert.equal((await fs.readFile(timeoutPath, 'utf8')).trim().split(/\r?\n/).filter(Boolean).length, 1);
+    const timeoutBlocked = await callJson(client, 'fast_resume', { run_id: timeoutRun.runId, acknowledge_uncertain: false });
+    assert.equal(timeoutBlocked.ok, false);
+    assert.equal(timeoutBlocked.code, 'EXTERNAL_RECONCILIATION_REQUIRED');
+    const timeoutReconciled = await callJson(client, 'fast_reconcile_external', {
+      run_id: timeoutRun.runId,
+      operation_id: 'reg-timeout-op',
+      outcome: 'confirmed',
+      readback: { committed: true, source: 'regression' },
+      note: 'Remote read-back confirmed the write.',
+    });
+    assert.equal(timeoutReconciled.nextStepIndex, 1);
+    assert.equal(timeoutReconciled.externalEffect.outcome, 'confirmed');
+    const timeoutResumed = await callJson(client, 'fast_resume', { run_id: timeoutRun.runId, acknowledge_uncertain: false });
+    assert.equal(timeoutResumed.status, 'COMPLETED');
+    assert.equal((await fs.readFile(timeoutPath, 'utf8')).trim().split(/\r?\n/).filter(Boolean).length, 1);
+
+    const retryFlag = path.join(root, 'runtime', 'external-retry-flag.txt');
+    const retryEffect = path.join(root, 'runtime', 'external-retry-effect.txt');
+    const retryCommand = `if (-not (Test-Path -LiteralPath ${psQuote(retryFlag)})) { Set-Content -LiteralPath ${psQuote(retryFlag)} -Value 'first'; throw 'simulated transport failure' }; Add-Content -LiteralPath ${psQuote(retryEffect)} -Value 'committed'`;
+    const retryRun = await callJson(client, 'fast_run', {
+      label: 'regression-external-failed-retry',
+      steps: [{
+        kind: 'powershell',
+        command: retryCommand,
+        external_effect: { operation_id: 'reg-retry-op', target: 'test://retry', payload: { value: 'committed' }, confirmation: 'execution' },
+      }],
+    });
+    assert.equal(retryRun.status, 'RECONCILIATION_REQUIRED');
+    assert.equal(retryRun.unresolvedExternalEffects[0].outcome, 'unknown');
+    const retryReconciled = await callJson(client, 'fast_reconcile_external', {
+      run_id: retryRun.runId,
+      operation_id: 'reg-retry-op',
+      outcome: 'failed',
+      readback: { committed: false, source: 'regression' },
+      note: 'Read-back proved the remote write did not commit.',
+    });
+    assert.equal(retryReconciled.safeToRetry, true);
+    assert.equal(retryReconciled.nextStepIndex, 0);
+    const retryResumed = await callJson(client, 'fast_resume', { run_id: retryRun.runId, acknowledge_uncertain: false });
+    assert.equal(retryResumed.status, 'COMPLETED');
+    assert.equal(retryResumed.externalEffects[0].outcome, 'confirmed');
+    assert.equal(retryResumed.externalEffects[0].attempt, 2);
+    assert.equal((await fs.readFile(retryEffect, 'utf8')).trim().split(/\r?\n/).filter(Boolean).length, 1);
+
+    const explicitReadbackPath = path.join(root, 'runtime', 'external-explicit-readback.txt');
+    const explicitReadbackRun = await callJson(client, 'fast_run', {
+      label: 'regression-external-explicit-readback',
+      steps: [{
+        kind: 'powershell',
+        command: `Add-Content -LiteralPath ${psQuote(explicitReadbackPath)} -Value 'once'`,
+        external_effect: { operation_id: 'reg-readback-op', target: 'test://browser-publish', payload: { value: 'once' }, confirmation: 'reconcile' },
+      }],
+    });
+    assert.equal(explicitReadbackRun.status, 'RECONCILIATION_REQUIRED');
+    assert.equal(explicitReadbackRun.results[0].ok, true);
+    assert.equal(explicitReadbackRun.unresolvedExternalEffects[0].outcome, 'unknown');
+    const explicitReadbackReconciled = await callJson(client, 'fast_reconcile_external', {
+      run_id: explicitReadbackRun.runId,
+      operation_id: 'reg-readback-op',
+      outcome: 'confirmed',
+      readback: { visible: true },
+    });
+    assert.equal(explicitReadbackReconciled.nextStepIndex, 1);
+    const explicitReadbackResumed = await callJson(client, 'fast_resume', { run_id: explicitReadbackRun.runId, acknowledge_uncertain: false });
+    assert.equal(explicitReadbackResumed.status, 'COMPLETED');
+    assert.equal((await fs.readFile(explicitReadbackPath, 'utf8')).trim().split(/\r?\n/).filter(Boolean).length, 1);
 
     const stopPromise = callJson(client, 'fast_run', {
       label: 'regression-emergency-stop',

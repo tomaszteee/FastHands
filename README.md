@@ -24,6 +24,7 @@ If the operator interrupts a run, completed work is preserved. The caller can re
 - `fast_batch` - 1-200 PowerShell commands with separate results and checkpoints.
 - `fast_run` - mixed multi-step workflows with durable progress and operator control, including native `windows_ui` steps when Windows UI Direct is configured.
 - `fast_resume` / `fast_revise` - resume from a checkpoint or replace only the unexecuted tail; resume verifies tracked file artifacts before continuing.
+- `fast_reconcile_external` - resolve an external side effect with unknown outcome after remote read-back, either confirming it so replay is skipped or marking it failed so the same operation can be retried safely.
 - Local operator monitor with **RUN / PAUSE / EMERGENCY STOP** and interrupting messages.
 - Windows UI Direct adapter via a compatible `windows-mcp-server` executable.
 - Optional legacy UIA batch adapter through `FAST_HANDS_LEGACY_UIA_OPERATOR`.
@@ -141,6 +142,35 @@ Inside `fast_run` or a saved macro, Windows UI Direct can be used as a normal ch
 
 If the backend is unavailable, shell/checkpoint functionality remains usable; UI-specific calls fail clearly.
 
+## External side-effect reconciliation
+
+Any `fast_run` step can declare an `external_effect` when it may mutate state outside the local workspace, such as an API write or a browser/UI publish action:
+
+```json
+{
+  "kind": "windows_ui",
+  "tool": "Invoke",
+  "arguments": { "name": "Publish" },
+  "external_effect": {
+    "operation_id": "publish-post-2026-08-29-001",
+    "target": "https://example.com/posts/123",
+    "payload": { "action": "publish" },
+    "confirmation": "reconcile"
+  }
+}
+```
+
+Before the action starts, Fast Hands durably records the operation identity, target and SHA-256 payload fingerprint with outcome `unknown`. This closes the crash window where a remote write may commit before the normal step checkpoint is advanced.
+
+- `confirmation: "execution"` marks the effect `confirmed` when the underlying action returns successfully. A crash/timeout before that confirmation still leaves `unknown` and blocks replay.
+- `confirmation: "reconcile"` is stricter and is the default for UI actions: even a successful click/call remains `unknown` until the caller reads the remote system back.
+- Any external action failure or timeout is treated as `unknown`, even when `fail_fast` is false.
+- `fast_resume` returns `EXTERNAL_RECONCILIATION_REQUIRED` and will not rerun an unknown operation.
+- After read-back, call `fast_reconcile_external` with `outcome: "confirmed"` to advance past the step without replay, or `outcome: "failed"` to allow a controlled retry using the same operation identity and payload fingerprint.
+- Reusing an `operation_id` with a different step, target or payload fingerprint is rejected.
+
+Callers may provide `payload_hash` directly instead of `payload` when they already have a SHA-256 fingerprint. Optional receipt/read-back metadata is bounded before being persisted in runtime state.
+
 ## Web and YouTube research
 
 Install optional local research dependencies:
@@ -180,7 +210,7 @@ FastWeb uses public search/read backends and local extraction. YouTubeResearch u
 
 Fast Hands is powerful software. A connected agent can run commands and, when UI backends are enabled, operate desktop applications.
 
-The execution engine records durable run state and checks local operator control before and after safe units. File artifacts referenced by `fs` steps (and optional per-step `artifacts` paths) are fingerprinted with SHA-256 + size at checkpoints. `fast_resume` compares the current files with the last checkpoint and returns `WORKSPACE_DRIFT_DETECTED` instead of blindly continuing when tracked content changed. **Emergency Stop** terminates active child processes and marks the affected step as uncertain when partial execution may have occurred.
+The execution engine records durable run state and checks local operator control before and after safe units. File artifacts referenced by `fs` steps (and optional per-step `artifacts` paths) are fingerprinted with SHA-256 + size at checkpoints. `fast_resume` compares the current files with the last checkpoint and returns `WORKSPACE_DRIFT_DETECTED` instead of blindly continuing when tracked content changed. Steps marked with `external_effect` get a durable pre-action operation record; an unknown external outcome blocks resume/revise until `fast_reconcile_external` records remote read-back. **Emergency Stop** terminates active child processes and marks the affected step as uncertain when partial execution may have occurred.
 
 Do not expose the monitor or HTTP MCP endpoint to an untrusted network without adding authenticated transport and least-privilege controls. See [SECURITY.md](SECURITY.md).
 
