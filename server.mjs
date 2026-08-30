@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+﻿import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import fssync from 'node:fs';
@@ -10,6 +10,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from 'zod';
 import { windowsUiDirect } from './windows-ui-bridge.mjs';
+import { deepMcpCapabilities, deepMcpResearch } from './integrations/fastweb/mcp-research-bridge.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const RUNTIME = path.join(ROOT, 'runtime');
@@ -23,6 +24,7 @@ const PERSISTENT_POWERSHELL = process.env.FAST_HANDS_PWSH || (IS_WINDOWS ? (fssy
 const VENV_PYTHON = IS_WINDOWS ? path.join(ROOT, '.venv', 'Scripts', 'python.exe') : path.join(ROOT, '.venv', 'bin', 'python');
 const PYTHON = process.env.FAST_HANDS_PYTHON || VENV_PYTHON;
 const FASTWEB_SCRIPT = path.join(ROOT, 'integrations', 'fastweb', 'fast_web.py');
+const RESEARCH_SCRIPT = path.join(ROOT, 'integrations', 'fastweb', 'research_engine.py');
 const YOUTUBE_SCRIPT = path.join(ROOT, 'integrations', 'youtube', 'research.py');
 const POWERSHELL_HOST = path.join(path.dirname(fileURLToPath(import.meta.url)), 'powershell-host.ps1');
 const TASKKILL = process.env.FAST_HANDS_TASKKILL || 'taskkill.exe';
@@ -33,7 +35,7 @@ const OUTBOX_FILE = path.join(RUNTIME, 'assistant-outbox.jsonl');
 const EVENTS_FILE = path.join(RUNTIME, 'events.jsonl');
 const DELIVERY_FILE = path.join(RUNTIME, 'delivery.json');
 const HEARTBEAT_FILE = path.join(RUNTIME, 'monitor-heartbeat.json');
-const VERSION = '0.6.8';
+const VERSION = '0.6.9';
 const MAX_UIA_BATCH = 8;
 
 for (const dir of [RUNTIME, RUNS, MACROS]) await fs.mkdir(dir, { recursive: true });
@@ -211,7 +213,7 @@ async function runProcess(program, args = [], options = {}) {
 
 async function runPythonJson(script, args = [], timeoutMs = 120000) {
   if (!fssync.existsSync(script)) return { ok: false, error: `Integration script not found: ${script}` };
-  const python = fssync.existsSync(PYTHON) ? PYTHON : (process.env.FAST_HANDS_PYTHON || 'python');
+  const python = PYTHON;
   const proc = await runProcess(python, [script, ...args], { timeoutMs, maxBuffer: 32 * 1024 * 1024 });
   let parsed = null;
   try { parsed = JSON.parse(proc.stdout); } catch {}
@@ -1055,7 +1057,8 @@ server.registerTool('fast_ui_type', { description: 'Type text into a Windows UI 
 server.registerTool('fast_ui_invoke', { description: 'Act via a native UI Automation control pattern using Windows UI Direct.', inputSchema: z.object({ ...uiTargetShape, action: z.enum(['invoke','set_value','toggle','select','expand','collapse']).optional(), value: z.string().optional() }) }, async (args) => await windowsUiDirect.call('Invoke', args));
 server.registerTool('fast_ui_get_text', { description: 'Read a Windows UI element name/value through Windows UI Direct.', inputSchema: z.object({ ...uiTargetShape }) }, async (args) => await windowsUiDirect.call('GetText', args));
 server.registerTool('fast_ui_wait', { description: 'Wait for the Windows UI to settle using Windows UI Direct.', inputSchema: z.object({ duration: z.number().int().min(0).max(60) }) }, async ({ duration }) => await windowsUiDirect.call('Wait', { duration }));
-server.registerTool('fast_web_search', { description: 'Search the public web locally through the optional FastWeb integration.', inputSchema: z.object({ query: z.string().min(1), top: z.number().int().min(1).max(25).default(10) }) }, async ({ query, top }) => ({ content: [{ type: 'text', text: JSON.stringify(await runPythonJson(FASTWEB_SCRIPT, ['search', query, '--top', String(top)], 60000), null, 2) }] }));
+server.registerTool('fast_research_capabilities', { description: 'READ-ONLY capability report for the on-demand EXTERNAL deep-research graph plus optional lazy MCP specialist layer.', inputSchema:z.object({}) }, async()=>{ const [graph,mcp]=await Promise.all([runPythonJson(RESEARCH_SCRIPT,['capabilities'],30000),Promise.resolve(deepMcpCapabilities())]); return {content:[{type:'text',text:JSON.stringify({ok:!!graph?.ok||!!mcp?.ok,domain:'EXTERNAL_ONLY',graph,mcp},null,2)}]}; });
+server.registerTool('fast_external_research', { description: 'EXTERNAL-ONLY adaptive deep research across public web, science, archives, code and public OSINT sources. Optional MCP specialist assistance is additive; local crawler data is never read or mutated.', inputSchema:z.object({query:z.string().min(1).max(4000),sources:z.array(z.enum(['web','searxng','core','base','openalex','crossref','arxiv','pubmed','internet_archive','wayback','github','osint_framework','shodan_public','ahmia','torch'])).max(20).default([]),mode:z.enum(['quick','deep','exhaustive']).default('deep'),query_budget:z.number().int().min(1).max(500).optional(),time_budget_sec:z.number().int().min(10).max(540).optional(),per_source:z.number().int().min(1).max(30).optional(),inspect_budget:z.number().int().min(0).max(240).optional(),max_chars:z.number().int().min(1000).max(30000).default(12000),allow_onion:z.boolean().default(false),mcp_assist:z.boolean().default(true)}) }, async(a)=>{ const args=['research',a.query,'--mode',a.mode,'--max-chars',String(a.max_chars)]; if(a.sources?.length)args.push('--sources',a.sources.join(',')); if(a.query_budget)args.push('--query-budget',String(a.query_budget)); if(a.time_budget_sec)args.push('--time-budget-sec',String(a.time_budget_sec)); if(a.per_source)args.push('--per-source',String(a.per_source)); if(a.inspect_budget!==undefined)args.push('--inspect-budget',String(a.inspect_budget)); if(a.allow_onion)args.push('--allow-onion'); const timeout=a.mode==='exhaustive'?560000:300000; const [external,mcp]=await Promise.all([runPythonJson(RESEARCH_SCRIPT,args,timeout),a.mcp_assist?deepMcpResearch(a.query,{mode:a.mode}):Promise.resolve(null)]); return{content:[{type:'text',text:JSON.stringify({ok:!!external?.ok||!!mcp?.ok,domain:'EXTERNAL_ONLY',localCorpusAccess:false,persistentWrites:false,external,mcp},null,2)}]}; });server.registerTool('fast_web_search', { description: 'Search the public web locally through the optional FastWeb integration.', inputSchema: z.object({ query: z.string().min(1), top: z.number().int().min(1).max(25).default(10) }) }, async ({ query, top }) => ({ content: [{ type: 'text', text: JSON.stringify(await runPythonJson(FASTWEB_SCRIPT, ['search', query, '--top', String(top)], 60000), null, 2) }] }));
 server.registerTool('fast_web_read', { description: 'Read and extract a public web page locally, with browser fallback when configured.', inputSchema: z.object({ url: z.string().url(), max_chars: z.number().int().min(500).max(200000).default(20000), force_browser: z.boolean().default(false), no_browser: z.boolean().default(false) }) }, async ({ url, max_chars, force_browser, no_browser }) => { const args=['read',url,'--max-chars',String(max_chars)]; if(force_browser) args.push('--force-browser'); if(no_browser) args.push('--no-browser'); return { content: [{ type: 'text', text: JSON.stringify(await runPythonJson(FASTWEB_SCRIPT,args,90000), null, 2) }] }; });
 server.registerTool('fast_web_deep', { description: 'Search multiple public web sources and read the top results locally through FastWeb.', inputSchema: z.object({ query: z.string().min(1), top: z.number().int().min(1).max(10).default(5), max_chars: z.number().int().min(500).max(50000).default(12000) }) }, async ({ query, top, max_chars }) => ({ content: [{ type: 'text', text: JSON.stringify(await runPythonJson(FASTWEB_SCRIPT,['deep',query,'--top',String(top),'--max-chars',String(max_chars)],120000), null, 2) }] }));
 server.registerTool('youtube_research', { description: 'Search YouTube, inspect metadata, fetch transcripts, optionally use local Whisper, and optionally extract frames.', inputSchema: z.object({ input: z.string().min(1), top: z.number().int().min(1).max(25).default(8), transcripts: z.number().int().min(0).max(25).default(0), whisper: z.boolean().default(false), force_whisper: z.boolean().default(false), frames: z.number().int().min(0).max(12).default(0) }) }, async ({ input, top, transcripts, whisper, force_whisper, frames }) => { const args=[input,'--top',String(top),'--transcripts',String(transcripts),'--frames',String(frames)]; if(whisper) args.push('--whisper'); if(force_whisper) args.push('--force-whisper'); return { content: [{ type: 'text', text: JSON.stringify(await runPythonJson(YOUTUBE_SCRIPT,args,300000), null, 2) }] }; });
@@ -1399,3 +1402,4 @@ if (process.argv.includes('--http')) {
   process.stdin.once('end', () => { persistentPowerShell.dispose(); windowsUiDirect.close().catch(() => {}); });
   process.once('exit', () => { persistentPowerShell.dispose(); windowsUiDirect.close().catch(() => {}); });
 }
+

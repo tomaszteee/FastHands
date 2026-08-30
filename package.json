@@ -1,6 +1,6 @@
 {
     "name": "fast-hands-mcp",
-    "version": "0.6.8",
+    "version": "0.6.9",
     "type": "module",
     "description": "Local-first cross-platform execution and research layer for AI agents with persistent PowerShell, durable checkpoints, live operator control, optional Windows UI, web research and YouTube research.",
     "main": "server.mjs",
@@ -12,8 +12,8 @@
         "start": "node server.mjs --http",
         "stdio": "node server.mjs",
         "monitor": "node monitor-server.mjs",
-        "check": "node --check server.mjs && node --check monitor-server.mjs && node --check windows-ui-bridge.mjs",
-        "test": "node scripts/self-test.mjs && node --test test/core.test.mjs",
+        "check": "node --check server.mjs && node --check monitor-server.mjs && node --check windows-ui-bridge.mjs && node --check integrations/fastweb/mcp-research-bridge.mjs",
+        "test": "node scripts/self-test.mjs && node --test test/core.test.mjs test/research.test.mjs",
         "pack:check": "npm pack --dry-run",
         "audit:repo": "node scripts/repo-audit.mjs"
     },
@@ -33,6 +33,9 @@
         "start-monitor.cmd",
         "macros/inspect_window.json",
         "integrations/fastweb/fast_web.py",
+        "integrations/fastweb/research_engine.py",
+        "integrations/fastweb/deep_sources.py",
+        "integrations/fastweb/mcp-research-bridge.mjs",
         "integrations/youtube/research.py",
         "integrations/youtube/transcript_helper.py",
         "scripts/setup-research.ps1",

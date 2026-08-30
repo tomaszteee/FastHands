@@ -1,4 +1,4 @@
-# Fast Hands
+﻿# Fast Hands
 
 [![CI](https://github.com/tomaszteee/FastHands/actions/workflows/ci.yml/badge.svg)](https://github.com/tomaszteee/FastHands/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
@@ -28,7 +28,8 @@ If the operator interrupts a run, completed work is preserved. The caller can re
 - Local operator monitor with **RUN / PAUSE / EMERGENCY STOP** and interrupting messages.
 - Windows UI Direct adapter via a compatible `windows-mcp-server` executable.
 - Optional legacy UIA batch adapter through `FAST_HANDS_LEGACY_UIA_OPERATOR`.
-- `fast_web_search`, `fast_web_read`, `fast_web_deep` - local public-web research.
+- ast_web_search, ast_web_read, ast_web_deep - local public-web research.
+- ast_external_research + ast_research_capabilities - adaptive EXTERNAL-ONLY multi-source research with relevance ranking, GitHub rate-limit circuit breaker, academic/archive/code/public-OSINT sources and optional MCP specialist assistance; it never reads or writes a local crawler corpus.
 - `youtube_research` - YouTube search, metadata, captions, local Whisper fallback and frame extraction.
 - Loopback-only HTTP endpoints by default (`127.0.0.1`).
 - MCP stdio mode for normal MCP clients.
@@ -234,3 +235,4 @@ MIT. Third-party dependencies and optional backends keep their own licenses; see
 
 IMI Studio
 https://www.imistudio.pl
+

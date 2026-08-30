@@ -1,5 +1,14 @@
-# Changelog
+﻿# Changelog
 
+## [0.6.9] - 2026-08-30
+
+### Deep Research + portability hardening
+
+- adds `fast_external_research` and `fast_research_capabilities` for adaptive EXTERNAL-ONLY multi-source research across public web, academic, archive, GitHub and public-OSINT sources,
+- improves relevance ranking so source authority cannot outweigh weak query relevance and raises the relevance floor for GitHub results,
+- adds a GitHub rate-limit circuit breaker so research continues through other sources instead of repeatedly hammering a throttled endpoint,
+- keeps optional MCP specialist discovery portable: no developer-machine paths are shipped and the specialist layer degrades cleanly when not installed,
+- improves Python runtime discovery with local venv, optional sibling FastWeb venv and platform PATH fallbacks,
 ## [0.6.8] - 2026-08-29
 
 ### External side-effect reconciliation
@@ -75,3 +84,5 @@
 - Windows UI Direct adapter with optional legacy UIA fallback.
 - Optional local FastWeb and YouTubeResearch integrations.
 - Security policy, CI and portability self-test.
+
+

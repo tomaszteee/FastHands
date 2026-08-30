@@ -1,4 +1,4 @@
-# Tools quick reference
+﻿# Tools quick reference
 
 Core MCP tools include `fast_exec`, `fast_batch`, `fast_run`, `fast_resume`, `fast_revise`, `fast_reconcile_external`, run/operator state, macros, and the visual fallback screenshot.
 
@@ -12,7 +12,7 @@ On Windows, Windows UI Direct convenience tools include `fast_ui_snapshot`, `fas
 }
 ```
 
-Optional research tools are `fast_web_search`, `fast_web_read`, `fast_web_deep`, and `youtube_research`.
+Optional research tools are `fast_web_search`, `fast_web_read`, `fast_web_deep`, `fast_research_capabilities`, `fast_external_research`, and `youtube_research`. `fast_external_research` is EXTERNAL-ONLY, on-demand, keeps persistent writes disabled, opens a short GitHub circuit breaker after rate limiting, and treats the optional MCP specialist layer as additive rather than required.
 
 `fast_probe` reports `coreOk`, global `ok`, optional backend health, and `degraded`. By default an unavailable Windows UI backend does not fail the core health check. Set `FAST_HANDS_REQUIRE_WINDOWS_UI=1` when UI availability must be part of the global PASS/FAIL gate.
 
@@ -52,3 +52,4 @@ While any external effect is unknown, `fast_resume` returns `EXTERNAL_RECONCILIA
 - optional `receipt` and `readback` metadata may be stored with the reconciliation.
 
 An operation ID cannot be rebound to a different step, target, or payload fingerprint.
+
