@@ -1,4 +1,4 @@
-﻿ddgs==9.16.0
+ddgs==9.16.1
 trafilatura==2.2.0
 requests==2.34.2
 playwright==1.62.0
